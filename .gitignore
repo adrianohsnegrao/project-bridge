@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.local/
+*.db
+*.db-shm
+*.db-wal
+*.tsbuildinfo
+vite.config.js
+vite.config.d.ts
+.env

@@ -1,0 +1,224 @@
+import { randomUUID } from "node:crypto";
+import type { DatabaseConnection } from "./database.js";
+import type { ApprovalRequest, ClientContext, Project, Task } from "./types.js";
+
+function parseApproval(row: Record<string, unknown>): ApprovalRequest {
+  return {
+    id: String(row.id),
+    tool_name: String(row.tool_name),
+    operation: String(row.operation),
+    project_id: String(row.project_id),
+    arguments: JSON.parse(String(row.arguments_json)),
+    idempotency_key: String(row.idempotency_key),
+    justification: String(row.justification),
+    requested_by: String(row.requested_by),
+    status: row.status as ApprovalRequest["status"],
+    created_at: String(row.created_at),
+    decided_at: row.decided_at ? String(row.decided_at) : null,
+    decision_note: row.decision_note ? String(row.decision_note) : null,
+    result: row.result_json ? JSON.parse(String(row.result_json)) : null,
+  };
+}
+
+export class ProjectRepository {
+  constructor(private readonly db: DatabaseConnection) {}
+
+  overview() {
+    const projectCounts = this.db.prepare(`
+      SELECT COUNT(*) AS total,
+             SUM(CASE WHEN status = 'at_risk' THEN 1 ELSE 0 END) AS at_risk
+      FROM projects
+    `).get() as { total: number; at_risk: number };
+    const pending = this.db.prepare("SELECT COUNT(*) AS count FROM approval_requests WHERE status = 'pending'").get() as { count: number };
+    const blockers = this.db.prepare("SELECT COUNT(*) AS count FROM blockers WHERE status = 'open'").get() as { count: number };
+    const recentAudit = this.db.prepare("SELECT COUNT(*) AS count FROM audit_events").get() as { count: number };
+    return {
+      projects: projectCounts.total,
+      projects_at_risk: projectCounts.at_risk ?? 0,
+      pending_approvals: pending.count,
+      open_blockers: blockers.count,
+      audited_operations: recentAudit.count,
+      mcp_endpoint: "http://127.0.0.1:8010/mcp",
+    };
+  }
+
+  listProjects(): Project[] {
+    return this.db.prepare("SELECT * FROM projects ORDER BY updated_at DESC").all() as Project[];
+  }
+
+  getProject(projectId: string) {
+    const project = this.db.prepare("SELECT * FROM projects WHERE id = ?").get(projectId) as Project | undefined;
+    if (!project) return null;
+    return {
+      ...project,
+      decisions: this.db.prepare("SELECT * FROM decisions WHERE project_id = ? ORDER BY decided_at DESC, id").all(projectId),
+      tasks: this.db.prepare("SELECT * FROM tasks WHERE project_id = ? ORDER BY CASE status WHEN 'blocked' THEN 0 WHEN 'in_progress' THEN 1 WHEN 'todo' THEN 2 ELSE 3 END, due_date").all(projectId),
+      blockers: this.db.prepare("SELECT * FROM blockers WHERE project_id = ? ORDER BY opened_at DESC").all(projectId),
+      documents: this.db.prepare("SELECT * FROM documents WHERE project_id = ? ORDER BY updated_at DESC").all(projectId),
+    };
+  }
+
+  listBlockers(projectId: string) {
+    return this.db.prepare("SELECT * FROM blockers WHERE project_id = ? AND status = 'open' ORDER BY opened_at DESC").all(projectId);
+  }
+
+  listApprovals(): ApprovalRequest[] {
+    return (this.db.prepare("SELECT * FROM approval_requests ORDER BY CASE status WHEN 'pending' THEN 0 ELSE 1 END, created_at DESC").all() as Record<string, unknown>[]).map(parseApproval);
+  }
+
+  getApproval(id: string): ApprovalRequest | null {
+    const row = this.db.prepare("SELECT * FROM approval_requests WHERE id = ?").get(id) as Record<string, unknown> | undefined;
+    return row ? parseApproval(row) : null;
+  }
+
+  proposeTask(input: {
+    projectId: string;
+    title: string;
+    priority: "low" | "medium" | "high";
+    dueDate?: string;
+    assignee?: string;
+    justification: string;
+    idempotencyKey: string;
+  }, client: ClientContext): { approval: ApprovalRequest; reused: boolean } {
+    const existing = this.db.prepare("SELECT * FROM approval_requests WHERE idempotency_key = ?").get(input.idempotencyKey) as Record<string, unknown> | undefined;
+    if (existing) return { approval: parseApproval(existing), reused: true };
+
+    if (!this.getProject(input.projectId)) throw new DomainError("PROJECT_NOT_FOUND", "Projeto não encontrado.");
+
+    const started = performance.now();
+    const id = `approval-${randomUUID()}`;
+    const now = new Date().toISOString();
+    const argumentsValue = {
+      title: input.title,
+      priority: input.priority,
+      due_date: input.dueDate ?? null,
+      assignee: input.assignee ?? null,
+    };
+
+    const create = this.db.transaction(() => {
+      this.db.prepare(`
+        INSERT INTO approval_requests
+        (id, tool_name, operation, project_id, arguments_json, idempotency_key, justification, requested_by, status, created_at)
+        VALUES (?, 'propose_task', 'create_task', ?, ?, ?, ?, ?, 'pending', ?)
+      `).run(id, input.projectId, JSON.stringify(argumentsValue), input.idempotencyKey, input.justification, client.clientName, now);
+
+      this.insertAudit({
+        requestId: id,
+        clientName: client.clientName,
+        action: "propose_task",
+        targetType: "approval",
+        targetId: id,
+        status: "pending_approval",
+        durationMs: performance.now() - started,
+        details: { transport: client.transport, scope: "tasks:propose", idempotency_key: input.idempotencyKey },
+      });
+    });
+    create();
+    return { approval: this.getApproval(id)!, reused: false };
+  }
+
+  decideApproval(id: string, decision: "approved" | "rejected", note: string): ApprovalRequest {
+    const current = this.getApproval(id);
+    if (!current) throw new DomainError("APPROVAL_NOT_FOUND", "Solicitação de aprovação não encontrada.");
+    if (current.status !== "pending") return current;
+
+    const now = new Date().toISOString();
+    const result = this.db.transaction(() => {
+      let operationResult: Record<string, unknown> = { decision };
+      if (decision === "approved" && current.operation === "create_task") {
+        const args = current.arguments as { title: string; priority: Task["priority"]; due_date?: string | null; assignee?: string | null };
+        const task: Task = {
+          id: `task-from-${current.id}`,
+          project_id: current.project_id,
+          title: args.title,
+          status: "todo",
+          priority: args.priority,
+          due_date: args.due_date ?? null,
+          assignee: args.assignee ?? null,
+          source: "mcp",
+          created_at: now,
+        };
+        this.db.prepare(`
+          INSERT OR IGNORE INTO tasks
+          (id, project_id, title, status, priority, due_date, assignee, source, created_at)
+          VALUES (@id, @project_id, @title, @status, @priority, @due_date, @assignee, @source, @created_at)
+        `).run(task);
+        operationResult = { decision, task };
+      }
+
+      this.db.prepare(`
+        UPDATE approval_requests
+        SET status = ?, decided_at = ?, decision_note = ?, result_json = ?
+        WHERE id = ?
+      `).run(decision, now, note, JSON.stringify(operationResult), id);
+
+      this.insertAudit({
+        requestId: id,
+        clientName: "revisor-humano",
+        action: "decide_approval",
+        targetType: "approval",
+        targetId: id,
+        status: decision,
+        durationMs: 0,
+        details: { note, original_client: current.requested_by },
+      });
+    });
+    result();
+    return this.getApproval(id)!;
+  }
+
+  listAudit(limit = 30) {
+    return (this.db.prepare("SELECT * FROM audit_events ORDER BY created_at DESC LIMIT ?").all(limit) as Record<string, unknown>[]).map((row) => ({
+      ...row,
+      details: JSON.parse(String(row.details_json)),
+      details_json: undefined,
+    }));
+  }
+
+  recordRead(client: ClientContext, action: string, targetType: string, targetId: string | null, durationMs: number): void {
+    this.insertAudit({
+      requestId: randomUUID(),
+      clientName: client.clientName,
+      action,
+      targetType,
+      targetId,
+      status: "success",
+      durationMs,
+      details: { transport: client.transport, scope: "projects:read" },
+    });
+  }
+
+  private insertAudit(input: {
+    requestId: string;
+    clientName: string;
+    action: string;
+    targetType: string;
+    targetId: string | null;
+    status: string;
+    durationMs: number;
+    details: Record<string, unknown>;
+  }): void {
+    this.db.prepare(`
+      INSERT INTO audit_events
+      (id, request_id, client_name, action, target_type, target_id, status, duration_ms, details_json, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      `audit-${randomUUID()}`,
+      input.requestId,
+      input.clientName,
+      input.action,
+      input.targetType,
+      input.targetId,
+      input.status,
+      Number(input.durationMs.toFixed(2)),
+      JSON.stringify(input.details),
+      new Date().toISOString(),
+    );
+  }
+}
+
+export class DomainError extends Error {
+  constructor(public readonly code: string, message: string) {
+    super(message);
+  }
+}

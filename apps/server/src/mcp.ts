@@ -69,7 +69,7 @@ export function resolveStdioClientContext(): ClientContext {
 
 export function buildMcpServer(repository: ProjectRepository, client: ClientContext): McpServer {
   const server = new McpServer(
-    { name: "project-bridge", version: "0.2.0" },
+    { name: "project-bridge", version: "0.3.0" },
     {
       instructions:
         "Consulte o contexto dos projetos antes de propor ações. Ferramentas de proposta nunca executam a mutação diretamente: elas criam uma solicitação para revisão humana.",

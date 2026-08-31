@@ -164,6 +164,14 @@ X-Project-Bridge-Scopes: projects:read,approvals:read,tasks:propose
 
 Esses cabeçalhos são uma política local demonstrativa, não substituem OAuth ou autenticação em uma implantação remota.
 
+### Validação com Codex
+
+O repositório contém uma configuração por projeto em [`.codex/config.toml`](.codex/config.toml). Após iniciar o servidor, abra o diretório como projeto confiável no Codex e reinicie o cliente para carregar a integração.
+
+A conexão também foi validada de forma independente com `codex-cli 0.150.0-alpha.8`: o cliente descobriu o servidor por Streamable HTTP, chamou `list_projects` e `get_project_context`, consumiu `structuredContent` e produziu um resumo sem acessar o banco ou usar o shell. A execução e a evidência de auditoria estão documentadas em [`docs/VALIDACAO_CODEX.md`](docs/VALIDACAO_CODEX.md).
+
+A configuração segue a [documentação oficial de MCP no Codex](https://developers.openai.com/codex/mcp/), incluindo allowlist das Tools e aprovação do cliente para operações de escrita.
+
 ## Scripts
 
 ```bash
@@ -206,7 +214,7 @@ Estas limitações delimitam o primeiro corte e orientam as próximas evoluçõe
 - [ ] mais operações mutáveis protegidas pelo mesmo fluxo de aprovação;
 - [ ] criação e edição de projetos pela interface;
 - [x] notificações MCP quando Resources forem alterados;
-- [ ] validação documentada com clientes MCP externos;
+- [x] validação documentada com cliente MCP externo (Codex CLI);
 - [ ] persistência preparada para cenários multiusuário e distribuídos;
 - [ ] identidade de usuários e separação de suas permissões.
 

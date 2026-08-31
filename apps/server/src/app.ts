@@ -53,7 +53,7 @@ export function createApp(database?: DatabaseConnection) {
   app.get("/api/audit", (_request, response) => response.json(repository.listAudit()));
   app.get("/api/mcp/info", (_request, response) => response.json({
     name: "project-bridge",
-    version: "0.2.0",
+    version: "0.3.0",
     transport: "Streamable HTTP",
     endpoint: "http://127.0.0.1:8010/mcp",
     default_scopes: ["projects:read", "approvals:read"],

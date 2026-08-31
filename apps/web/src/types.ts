@@ -21,6 +21,8 @@ export interface ProjectSummary {
   updated_at: string;
 }
 
+export type ProjectInput = Omit<ProjectSummary, "id" | "updated_at">;
+
 export interface Project extends ProjectSummary {
   decisions: Array<{
     id: string;

@@ -84,6 +84,65 @@ describe("Project Bridge API", () => {
     unsubscribe();
     await runtime.close();
   });
+
+  it("cria e edita projetos pela API humana com validação e auditoria", async () => {
+    const runtime = createApp(testDatabase());
+    const input = {
+      name: "Portal de Conhecimento",
+      summary: "Centraliza procedimentos e referências para a equipe de atendimento.",
+      objective: "Reduzir o tempo de busca e manter o conhecimento operacional atualizado.",
+      status: "active",
+      owner: "Marina Costa",
+      progress: 10,
+      target_date: "2026-11-30",
+    };
+
+    const created = await request(runtime.app).post("/api/projects").send(input).expect(201);
+    expect(created.body).toMatchObject({ id: "portal-de-conhecimento", ...input });
+
+    const updated = await request(runtime.app)
+      .patch(`/api/projects/${created.body.id}`)
+      .send({ status: "at_risk", progress: 35, summary: "Centraliza procedimentos validados e referências para toda a equipe." })
+      .expect(200);
+    expect(updated.body).toMatchObject({ status: "at_risk", progress: 35 });
+
+    const detail = await request(runtime.app).get(`/api/projects/${created.body.id}`).expect(200);
+    expect(detail.body).toMatchObject({ name: input.name, status: "at_risk", progress: 35 });
+    const audit = await request(runtime.app).get("/api/audit").expect(200);
+    expect(audit.body).toEqual(expect.arrayContaining([
+      expect.objectContaining({ action: "create_project", client_name: "interface-humana", target_id: created.body.id }),
+      expect.objectContaining({ action: "update_project", client_name: "interface-humana", target_id: created.body.id }),
+    ]));
+
+    await request(runtime.app).post("/api/projects").send({ ...input, name: "x", progress: 120 }).expect(400);
+    await runtime.close();
+  });
+
+  it("notifica clientes MCP quando um projeto é criado ou editado", async () => {
+    const runtime = createApp(testDatabase());
+    const events: unknown[] = [];
+    const unsubscribe = runtime.mcpHandler.bus.subscribe((event) => events.push(event));
+    const created = await request(runtime.app).post("/api/projects").send({
+      name: "Jornada do Cliente",
+      summary: "Mapeia oportunidades de melhoria na experiência de atendimento.",
+      objective: "Priorizar mudanças com base em evidências coletadas ao longo da jornada.",
+      status: "active",
+      owner: "Rafael Lima",
+      progress: 0,
+      target_date: "2026-12-15",
+    }).expect(201);
+    await request(runtime.app).patch(`/api/projects/${created.body.id}`).send({ progress: 20 }).expect(200);
+
+    expect(events).toEqual([
+      { kind: "resource_updated", uri: "project-bridge://projects" },
+      { kind: "resource_updated", uri: `project-bridge://projects/${created.body.id}` },
+      { kind: "resource_updated", uri: "project-bridge://projects" },
+      { kind: "resource_updated", uri: `project-bridge://projects/${created.body.id}` },
+    ]);
+
+    unsubscribe();
+    await runtime.close();
+  });
 });
 
 describe("MCP contracts", () => {

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "./api";
-import type { Approval, AuditEvent, McpInfo, Overview, Page, Project, ProjectSummary } from "./types";
+import type { Approval, AuditEvent, McpInfo, Overview, Page, Project, ProjectInput, ProjectSummary } from "./types";
 
 const statusLabels = {
   active: "Em andamento",
@@ -33,7 +33,7 @@ export default function App() {
   const [error, setError] = useState("");
   const [tutorialOpen, setTutorialOpen] = useState(() => localStorage.getItem("project-bridge-tutorial") !== "done");
 
-  const refresh = async () => {
+  const refresh = async (preferredProjectId?: string) => {
     setError("");
     try {
       const [nextOverview, nextProjects, nextApprovals, nextAudit, nextMcpInfo] = await Promise.all([
@@ -44,7 +44,12 @@ export default function App() {
       setApprovals(nextApprovals);
       setAudit(nextAudit);
       setMcpInfo(nextMcpInfo);
-      if (nextProjects[0]) setProject(await api.project(nextProjects[0].id));
+      const selectedId = preferredProjectId ?? project?.id ?? nextProjects[0]?.id;
+      if (selectedId && nextProjects.some((item) => item.id === selectedId)) {
+        setProject(await api.project(selectedId));
+      } else {
+        setProject(null);
+      }
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Não foi possível carregar a central.");
     } finally {
@@ -82,7 +87,13 @@ export default function App() {
         {loading ? <Loading /> : (
           <>
             {page === "overview" && overview && <OverviewPage overview={overview} project={project} audit={audit} onNavigate={navigate} />}
-            {page === "projects" && <ProjectsPage projects={projects} project={project} onSelect={async (id) => setProject(await api.project(id))} />}
+            {page === "projects" && <ProjectsPage
+              projects={projects}
+              project={project}
+              onSelect={async (id) => setProject(await api.project(id))}
+              onCreate={async (input) => { const created = await api.createProject(input); await refresh(created.id); }}
+              onUpdate={async (id, input) => { await api.updateProject(id, input); await refresh(id); }}
+            />}
             {page === "approvals" && <ApprovalsPage approvals={approvals} onDecision={async (id, decision, note) => { await api.decideApproval(id, decision, note); await refresh(); }} />}
             {page === "activity" && mcpInfo && <ActivityPage info={mcpInfo} audit={audit} />}
           </>
@@ -123,14 +134,24 @@ function Metric({ label, value, note, tone }: { label: string; value: number; no
   return <article className={`metric-card ${tone}`}><span>{label}</span><strong>{value}</strong><small>{note}</small></article>;
 }
 
-function ProjectsPage({ projects, project, onSelect }: { projects: ProjectSummary[]; project: Project | null; onSelect: (id: string) => void }) {
+function ProjectsPage({ projects, project, onSelect, onCreate, onUpdate }: {
+  projects: ProjectSummary[];
+  project: Project | null;
+  onSelect: (id: string) => void;
+  onCreate: (input: ProjectInput) => Promise<void>;
+  onUpdate: (id: string, input: ProjectInput) => Promise<void>;
+}) {
+  const [formMode, setFormMode] = useState<"create" | "edit" | null>(null);
   const counts = useMemo(() => project ? {
     pending: project.tasks.filter((task) => task.status !== "done").length,
     decisions: project.decisions.filter((decision) => decision.status === "pending").length,
   } : { pending: 0, decisions: 0 }, [project]);
   return <>
     <PageHeading eyebrow="PROJETOS" title="Contexto organizado para pessoas e integrações." description="As mesmas informações visíveis aqui podem ser consultadas de forma estruturada por clientes MCP autorizados." />
-    <label className="project-selector">Projeto selecionado<select value={project?.id ?? ""} onChange={(event) => onSelect(event.target.value)}>{projects.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+    <div className="project-toolbar">
+      <label className="project-selector">Projeto selecionado<select value={project?.id ?? ""} onChange={(event) => onSelect(event.target.value)}>{projects.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+      <div><button className="secondary-button" disabled={!project} onClick={() => setFormMode("edit")}>Editar projeto</button><button className="primary-button" onClick={() => setFormMode("create")}>Novo projeto</button></div>
+    </div>
     {project && <>
       <section className="project-hero panel"><div><StatusPill status={project.status} /><h2>{project.name}</h2><p>{project.objective}</p></div><div className="progress-circle" style={{ "--progress": `${project.progress * 3.6}deg` } as React.CSSProperties}><span>{project.progress}%<small>concluído</small></span></div></section>
       <section className="project-summary-strip"><div><small>Responsável</small><strong>{project.owner}</strong></div><div><small>Data alvo</small><strong>{dateLabel(project.target_date)}</strong></div><div><small>Tarefas abertas</small><strong>{counts.pending}</strong></div><div><small>Decisões pendentes</small><strong>{counts.decisions}</strong></div></section>
@@ -143,7 +164,65 @@ function ProjectsPage({ projects, project, onSelect }: { projects: ProjectSummar
         <section className="panel"><div className="section-title"><div><span>REFERÊNCIAS</span><h2>Documentos</h2></div></div><div className="document-list">{project.documents.map((document) => <article key={document.id}><span>▤</span><div><strong>{document.title}</strong><p>{document.summary}</p><small>{document.kind} · atualizado em {dateLabel(document.updated_at)}</small></div></article>)}</div></section>
       </div>
     </>}
+    {formMode && <ProjectForm
+      mode={formMode}
+      project={formMode === "edit" ? project : null}
+      onClose={() => setFormMode(null)}
+      onSubmit={async (input) => {
+        if (formMode === "edit" && project) await onUpdate(project.id, input);
+        else await onCreate(input);
+        setFormMode(null);
+      }}
+    />}
   </>;
+}
+
+function ProjectForm({ mode, project, onClose, onSubmit }: {
+  mode: "create" | "edit";
+  project: Project | null;
+  onClose: () => void;
+  onSubmit: (input: ProjectInput) => Promise<void>;
+}) {
+  const [values, setValues] = useState<ProjectInput>(() => project ? {
+    name: project.name,
+    summary: project.summary,
+    objective: project.objective,
+    status: project.status,
+    owner: project.owner,
+    progress: project.progress,
+    target_date: project.target_date.slice(0, 10),
+  } : {
+    name: "",
+    summary: "",
+    objective: "",
+    status: "active",
+    owner: "",
+    progress: 0,
+    target_date: new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10),
+  });
+  const [saving, setSaving] = useState(false);
+  const [formError, setFormError] = useState("");
+  const update = <K extends keyof ProjectInput>(key: K, value: ProjectInput[K]) => setValues((current) => ({ ...current, [key]: value }));
+
+  return <div className="modal-backdrop" role="presentation">
+    <section className="project-form-modal" role="dialog" aria-modal="true" aria-labelledby="project-form-title">
+      <button className="modal-close" aria-label="Fechar formulário" onClick={onClose}>×</button>
+      <span className="tutorial-eyebrow">{mode === "create" ? "NOVO PROJETO" : "EDITAR PROJETO"}</span>
+      <h2 id="project-form-title">{mode === "create" ? "Organize um novo projeto" : "Atualize as informações principais"}</h2>
+      <p>Estes dados serão exibidos para a equipe e disponibilizados como contexto estruturado para integrações autorizadas.</p>
+      <form onSubmit={(event) => { event.preventDefault(); setSaving(true); setFormError(""); void onSubmit(values).catch((error: unknown) => setFormError(error instanceof Error ? error.message : "Não foi possível salvar o projeto.")).finally(() => setSaving(false)); }}>
+        <label>Nome do projeto<input required minLength={3} maxLength={100} value={values.name} onChange={(event) => update("name", event.target.value)} /></label>
+        <label>Resumo curto<textarea required minLength={10} maxLength={280} rows={2} value={values.summary} onChange={(event) => update("summary", event.target.value)} /></label>
+        <label className="full-field">Objetivo<textarea required minLength={10} maxLength={600} rows={3} value={values.objective} onChange={(event) => update("objective", event.target.value)} /></label>
+        <label>Responsável<input required minLength={2} maxLength={100} value={values.owner} onChange={(event) => update("owner", event.target.value)} /></label>
+        <label>Situação<select value={values.status} onChange={(event) => update("status", event.target.value as ProjectInput["status"])}><option value="active">Em andamento</option><option value="at_risk">Requer atenção</option><option value="completed">Concluído</option></select></label>
+        <label>Progresso (%)<input required type="number" min={0} max={100} value={values.progress} onChange={(event) => update("progress", Number(event.target.value))} /></label>
+        <label>Data alvo<input required type="date" value={values.target_date} onChange={(event) => update("target_date", event.target.value)} /></label>
+        {formError && <div className="form-error" role="alert">{formError}</div>}
+        <div className="project-form-actions"><button type="button" className="secondary-button" onClick={onClose}>Cancelar</button><button type="submit" className="primary-button" disabled={saving}>{saving ? "Salvando…" : mode === "create" ? "Criar projeto" : "Salvar alterações"}</button></div>
+      </form>
+    </section>
+  </div>;
 }
 
 function approvalScope(approval: Approval): string {

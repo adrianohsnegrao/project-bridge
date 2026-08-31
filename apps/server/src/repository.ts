@@ -58,6 +58,68 @@ export class ProjectRepository {
     };
   }
 
+  createProject(input: Omit<Project, "id" | "updated_at">): Project {
+    const now = new Date().toISOString();
+    const baseId = input.name
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-|-$/g, "")
+      .slice(0, 42) || "projeto";
+    let id = baseId;
+    let suffix = 2;
+    while (this.db.prepare("SELECT 1 FROM projects WHERE id = ?").get(id)) {
+      id = `${baseId}-${suffix++}`;
+    }
+
+    const project: Project = { id, ...input, updated_at: now };
+    const create = this.db.transaction(() => {
+      this.db.prepare(`
+        INSERT INTO projects (id, name, summary, objective, status, owner, progress, target_date, updated_at)
+        VALUES (@id, @name, @summary, @objective, @status, @owner, @progress, @target_date, @updated_at)
+      `).run(project);
+      this.insertAudit({
+        requestId: randomUUID(),
+        clientName: "interface-humana",
+        action: "create_project",
+        targetType: "project",
+        targetId: id,
+        status: "success",
+        durationMs: 0,
+        details: { source: "web", changed_fields: Object.keys(input) },
+      });
+    });
+    create();
+    return project;
+  }
+
+  updateProject(projectId: string, input: Partial<Omit<Project, "id" | "updated_at">>): Project {
+    const current = this.db.prepare("SELECT * FROM projects WHERE id = ?").get(projectId) as Project | undefined;
+    if (!current) throw new DomainError("PROJECT_NOT_FOUND", "Projeto não encontrado.");
+    const updated: Project = { ...current, ...input, updated_at: new Date().toISOString() };
+    const update = this.db.transaction(() => {
+      this.db.prepare(`
+        UPDATE projects
+        SET name = @name, summary = @summary, objective = @objective, status = @status,
+            owner = @owner, progress = @progress, target_date = @target_date, updated_at = @updated_at
+        WHERE id = @id
+      `).run(updated);
+      this.insertAudit({
+        requestId: randomUUID(),
+        clientName: "interface-humana",
+        action: "update_project",
+        targetType: "project",
+        targetId: projectId,
+        status: "success",
+        durationMs: 0,
+        details: { source: "web", changed_fields: Object.keys(input) },
+      });
+    });
+    update();
+    return updated;
+  }
+
   listBlockers(projectId: string) {
     return this.db.prepare("SELECT * FROM blockers WHERE project_id = ? AND status = 'open' ORDER BY opened_at DESC").all(projectId);
   }

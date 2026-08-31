@@ -12,6 +12,21 @@ const DecisionSchema = z.object({
   note: z.string().min(3).max(500),
 });
 
+const ProjectFieldsSchema = z.object({
+  name: z.string().trim().min(3).max(100),
+  summary: z.string().trim().min(10).max(280),
+  objective: z.string().trim().min(10).max(600),
+  status: z.enum(["active", "at_risk", "completed"]),
+  owner: z.string().trim().min(2).max(100),
+  progress: z.number().int().min(0).max(100),
+  target_date: z.iso.date(),
+});
+
+const ProjectUpdateSchema = ProjectFieldsSchema.partial().refine(
+  (input) => Object.keys(input).length > 0,
+  { message: "Informe ao menos um campo para atualizar." },
+);
+
 export function createApp(database?: DatabaseConnection) {
   const db = database ?? createDatabase();
   const repository = new ProjectRepository(db);
@@ -29,10 +44,30 @@ export function createApp(database?: DatabaseConnection) {
 
   app.get("/api/overview", (_request, response) => response.json(repository.overview()));
   app.get("/api/projects", (_request, response) => response.json(repository.listProjects()));
+  app.post("/api/projects", (request, response, next) => {
+    try {
+      const project = repository.createProject(ProjectFieldsSchema.parse(request.body));
+      mcpHandler.notify.resourceUpdated("project-bridge://projects");
+      mcpHandler.notify.resourceUpdated(`project-bridge://projects/${project.id}`);
+      response.status(201).json(project);
+    } catch (error) {
+      next(error);
+    }
+  });
   app.get("/api/projects/:projectId", (request, response) => {
     const project = repository.getProject(request.params.projectId);
     if (!project) return response.status(404).json({ code: "PROJECT_NOT_FOUND", message: "Projeto não encontrado." });
     return response.json(project);
+  });
+  app.patch("/api/projects/:projectId", (request, response, next) => {
+    try {
+      const project = repository.updateProject(request.params.projectId, ProjectUpdateSchema.parse(request.body));
+      mcpHandler.notify.resourceUpdated("project-bridge://projects");
+      mcpHandler.notify.resourceUpdated(`project-bridge://projects/${project.id}`);
+      response.json(project);
+    } catch (error) {
+      next(error);
+    }
   });
   app.get("/api/approvals", (_request, response) => response.json(repository.listApprovals()));
   app.post("/api/approvals/:approvalId/decision", (request, response, next) => {
@@ -53,7 +88,7 @@ export function createApp(database?: DatabaseConnection) {
   app.get("/api/audit", (_request, response) => response.json(repository.listAudit()));
   app.get("/api/mcp/info", (_request, response) => response.json({
     name: "project-bridge",
-    version: "0.4.0",
+    version: "0.5.0",
     transport: "Streamable HTTP",
     endpoint: "http://127.0.0.1:8010/mcp",
     default_scopes: ["projects:read", "approvals:read"],

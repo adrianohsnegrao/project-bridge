@@ -12,6 +12,8 @@ Esta evidência registra uma execução real do Project Bridge como servidor MCP
 - política do cliente: Tools de escrita exigem aprovação;
 - escopos fornecidos: `projects:read`, `approvals:read` e `tasks:propose`.
 
+> A execução original antecede a versão `0.6.0`. A partir dela, a fronteira HTTP exige Bearer token e os escopos vêm da credencial configurada no servidor, sem confiar em cabeçalhos de permissão enviados pelo cliente.
+
 ## Cenário
 
 O cliente recebeu a instrução de usar exclusivamente o servidor `project_bridge`, executar primeiro `list_projects`, consultar o primeiro resultado com `get_project_context`, não usar shell e não modificar dados.
@@ -42,11 +44,13 @@ Nenhuma Tool mutável foi chamada. O resultado veio de `structuredContent`, sem 
 
 ## Como reproduzir
 
-1. Execute `pnpm dev` na raiz.
-2. Confirme `http://127.0.0.1:8010/api/health`.
-3. Abra o repositório como projeto confiável no Codex.
-4. Reinicie o cliente para carregar [`.codex/config.toml`](../.codex/config.toml).
-5. Use `/mcp` no cliente interativo ou `codex mcp list` na CLI para conferir o servidor.
-6. Peça ao cliente para listar os projetos usando somente `project_bridge`.
+1. Defina `PROJECT_BRIDGE_HTTP_CREDENTIALS` no processo do servidor conforme o README.
+2. Defina `PROJECT_BRIDGE_HTTP_TOKEN` no processo do Codex com o mesmo token.
+3. Execute `pnpm dev` na raiz.
+4. Confirme `http://127.0.0.1:8010/api/health`.
+5. Abra o repositório como projeto confiável no Codex.
+6. Reinicie o cliente para carregar [`.codex/config.toml`](../.codex/config.toml).
+7. Use `/mcp` no cliente interativo ou `codex mcp list` na CLI para conferir o servidor.
+8. Peça ao cliente para listar os projetos usando somente `project_bridge`.
 
 O formato de configuração e os recursos suportados estão descritos na [documentação oficial de MCP no Codex](https://developers.openai.com/codex/mcp/).

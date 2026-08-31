@@ -8,6 +8,7 @@ import * as z from "zod/v4";
 import type { ProjectRepository } from "./repository.js";
 import { DomainError } from "./repository.js";
 import type { ClientContext } from "./types.js";
+import { HttpAuthenticator } from "./auth.js";
 
 const ErrorSchema = z.object({
   code: z.string(),
@@ -46,13 +47,8 @@ function handleToolError(error: unknown) {
   return toolResult({ ok: false, error: { code: domainError.code, message: domainError.message } }, true);
 }
 
-export function resolveHttpClientContext(context: McpRequestContext): ClientContext {
-  const clientName = context.requestInfo?.headers.get("x-project-bridge-client")?.trim() || "cliente-mcp-local";
-  const requestedScopes = context.requestInfo?.headers.get("x-project-bridge-scopes")
-    ?.split(",")
-    .map((scope) => scope.trim())
-    .filter(Boolean) ?? ["projects:read", "approvals:read"];
-  return { clientName, scopes: new Set(requestedScopes), transport: "http" };
+export function resolveHttpClientContext(context: McpRequestContext, authenticator: HttpAuthenticator): ClientContext {
+  return authenticator.authenticate(context.requestInfo?.headers.get("authorization") ?? undefined);
 }
 
 export function resolveStdioClientContext(): ClientContext {
@@ -69,7 +65,7 @@ export function resolveStdioClientContext(): ClientContext {
 
 export function buildMcpServer(repository: ProjectRepository, client: ClientContext): McpServer {
   const server = new McpServer(
-    { name: "project-bridge", version: "0.4.0" },
+    { name: "project-bridge", version: "0.6.0" },
     {
       instructions:
         "Consulte o contexto dos projetos antes de propor ações. Ferramentas de proposta nunca executam a mutação diretamente: elas criam uma solicitação para revisão humana.",
@@ -378,6 +374,6 @@ export function buildMcpServer(repository: ProjectRepository, client: ClientCont
   return server;
 }
 
-export function createMcpFactory(repository: ProjectRepository): McpServerFactory {
-  return (context) => buildMcpServer(repository, resolveHttpClientContext(context));
+export function createMcpFactory(repository: ProjectRepository, authenticator: HttpAuthenticator): McpServerFactory {
+  return (context) => buildMcpServer(repository, resolveHttpClientContext(context, authenticator));
 }

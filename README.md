@@ -28,6 +28,8 @@ O foco técnico está no protocolo e no desenho seguro da integração. Nenhum m
 - banco SQLite local com seed idempotente;
 - servidor MCP construído com o SDK oficial TypeScript 2.0;
 - Streamable HTTP em `/mcp` e execução local por stdio;
+- autenticação Bearer obrigatória no transporte HTTP, com tokens fora do repositório;
+- identidade e escopos vinculados à credencial no servidor;
 - MCP Resources, Tools e Prompt;
 - schemas Zod de entrada e saída;
 - escopos mínimos por ferramenta;
@@ -37,7 +39,7 @@ O foco técnico está no protocolo e no desenho seguro da integração. Nenhum m
 - trilha de auditoria com cliente, ação, estado e duração;
 - auditoria separando ações humanas de chamadas feitas por integrações;
 - notificação de mudança para clientes MCP inscritos quando projetos ou aprovações alteram Resources;
-- onze testes automatizados, incluindo contratos das mutações, CRUD humano de projetos, transporte HTTP e assinatura real.
+- doze testes automatizados, incluindo autenticação, contratos das mutações, CRUD humano de projetos, transporte HTTP e assinatura real.
 
 ## Corte vertical demonstrado
 
@@ -159,14 +161,13 @@ Endpoint:
 http://127.0.0.1:8010/mcp
 ```
 
-Sem configuração adicional, o cliente recebe somente `projects:read` e `approvals:read`. Para demonstrar a proposta de tarefa no ambiente local, envie:
+O endpoint falha de forma segura quando nenhuma credencial foi configurada. Defina no ambiente do servidor um JSON com cliente, token e escopos autorizados:
 
-```text
-X-Project-Bridge-Client: meu-cliente-local
-X-Project-Bridge-Scopes: projects:read,approvals:read,tasks:propose,tasks:update:propose,blockers:resolve:propose
+```powershell
+$env:PROJECT_BRIDGE_HTTP_CREDENTIALS='[{"client_name":"codex-local","token":"SEU-TOKEN-ALEATORIO-DE-32-CARACTERES","scopes":["projects:read","approvals:read","tasks:propose","tasks:update:propose","blockers:resolve:propose"]}]'
 ```
 
-Esses cabeçalhos são uma política local demonstrativa, não substituem OAuth ou autenticação em uma implantação remota.
+O cliente envia somente `Authorization: Bearer <token>`. Nome e escopos são recuperados da credencial correspondente no servidor; cabeçalhos enviados pelo cliente não ampliam permissões. Para o arquivo `.codex/config.toml`, disponibilize o mesmo token na variável `PROJECT_BRIDGE_HTTP_TOKEN`. A [documentação oficial de MCP no Codex](https://developers.openai.com/codex/mcp/) confirma o suporte a `bearer_token_env_var` para servidores Streamable HTTP.
 
 ### Validação com Codex
 
@@ -189,7 +190,10 @@ pnpm build      # builds de produção
 
 - bind somente em `127.0.0.1`;
 - proteção de Host e Origin fornecida pelo adapter Express oficial;
-- acesso de leitura por padrão;
+- Bearer token obrigatório no MCP HTTP;
+- comparação de tokens por SHA-256 em tempo constante;
+- credenciais fora do repositório e falha segura quando não configuradas;
+- identidade e escopos definidos no servidor, não em cabeçalhos controlados pelo cliente;
 - escopos separados por família de mutação;
 - schemas estritos com Zod;
 - mutação sujeita a aprovação humana;
@@ -210,14 +214,15 @@ pnpm build      # builds de produção
 9. atualização de tarefa e resolução de impedimento somente após aprovação.
 10. criação e edição de projetos com validação e auditoria da interface humana;
 11. invalidação dos Resources de catálogo e detalhe após alterações de projeto.
+12. rejeição de requests sem token ou com token inválido, inclusive com escopos forjados.
 
-Os itens acima são cobertos por onze casos automatizados; alguns casos validam mais de um contrato dentro do mesmo fluxo.
+Os itens acima são cobertos por doze casos automatizados; alguns casos validam mais de um contrato dentro do mesmo fluxo.
 
 ## Limitações do protótipo
 
 Estas limitações delimitam o primeiro corte e orientam as próximas evoluções. Elas são mantidas aqui para tornar decisões e trade-offs visíveis.
 
-- [ ] autenticação e autorização HTTP reais no lugar dos cabeçalhos demonstrativos;
+- [x] autenticação e autorização HTTP reais no lugar dos cabeçalhos demonstrativos;
 - [x] mais operações mutáveis protegidas pelo mesmo fluxo de aprovação;
 - [x] criação e edição de projetos pela interface;
 - [x] notificações MCP quando Resources forem alterados;

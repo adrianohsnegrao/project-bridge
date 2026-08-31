@@ -102,6 +102,8 @@ export interface McpInfo {
   name: string;
   version: string;
   transport: string;
+  http_authentication: string;
+  authenticated_clients: number;
   endpoint: string;
   default_scopes: string[];
   mutation_scope: string;

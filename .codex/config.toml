@@ -1,6 +1,6 @@
 [mcp_servers.project_bridge]
 url = "http://127.0.0.1:8010/mcp"
-http_headers = { "X-Project-Bridge-Client" = "codex-local", "X-Project-Bridge-Scopes" = "projects:read,approvals:read,tasks:propose,tasks:update:propose,blockers:resolve:propose" }
+bearer_token_env_var = "PROJECT_BRIDGE_HTTP_TOKEN"
 enabled_tools = ["list_projects", "get_project_context", "list_project_blockers", "get_approval_status", "propose_task", "propose_task_update", "propose_blocker_resolution"]
 default_tools_approval_mode = "writes"
 startup_timeout_sec = 10

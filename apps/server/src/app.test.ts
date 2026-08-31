@@ -6,8 +6,15 @@ import { createApp } from "./app.js";
 import { createDatabase, type DatabaseConnection } from "./database.js";
 import { buildMcpServer } from "./mcp.js";
 import { ProjectRepository } from "./repository.js";
+import { HttpAuthenticator } from "./auth.js";
 
 const databases: DatabaseConnection[] = [];
+const httpToken = "project-bridge-contract-token-123456";
+const httpAuthenticator = () => new HttpAuthenticator(JSON.stringify([{
+  client_name: "http-contract-client",
+  token: httpToken,
+  scopes: ["projects:read", "approvals:read"],
+}]));
 
 function testDatabase(): DatabaseConnection {
   const db = createDatabase(":memory:");
@@ -278,15 +285,14 @@ describe("MCP contracts", () => {
   });
 
   it("aceita uma conexão real por Streamable HTTP", async () => {
-    const runtime = createApp(testDatabase());
+    const runtime = createApp(testDatabase(), httpAuthenticator());
     const httpServer = runtime.app.listen(0, "127.0.0.1");
     await new Promise<void>((resolve) => httpServer.once("listening", resolve));
     const address = httpServer.address() as AddressInfo;
     const transport = new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${address.port}/mcp`), {
       requestInit: {
         headers: {
-          "x-project-bridge-client": "http-contract-test",
-          "x-project-bridge-scopes": "projects:read,approvals:read",
+          authorization: `Bearer ${httpToken}`,
         },
       },
     });
@@ -302,11 +308,13 @@ describe("MCP contracts", () => {
   });
 
   it("entrega a atualização do Resource por uma assinatura MCP real", async () => {
-    const runtime = createApp(testDatabase());
+    const runtime = createApp(testDatabase(), httpAuthenticator());
     const httpServer = runtime.app.listen(0, "127.0.0.1");
     await new Promise<void>((resolve) => httpServer.once("listening", resolve));
     const address = httpServer.address() as AddressInfo;
-    const transport = new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${address.port}/mcp`));
+    const transport = new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${address.port}/mcp`), {
+      requestInit: { headers: { authorization: `Bearer ${httpToken}` } },
+    });
     const client = new Client(
       { name: "resource-subscription-test", version: "0.1.0" },
       { versionNegotiation: { mode: "auto" } },
@@ -332,5 +340,16 @@ describe("MCP contracts", () => {
     await client.close();
     await runtime.close();
     await new Promise<void>((resolve, reject) => httpServer.close((error) => error ? reject(error) : resolve()));
+  });
+
+  it("rejeita HTTP sem Bearer token e ignora escopos forjados pelo cliente", async () => {
+    const runtime = createApp(testDatabase(), httpAuthenticator());
+    await request(runtime.app).post("/mcp").expect(401).expect("WWW-Authenticate", 'Bearer realm="project-bridge"');
+    await request(runtime.app)
+      .post("/mcp")
+      .set("Authorization", "Bearer token-incorreto-com-tamanho-suficiente")
+      .set("X-Project-Bridge-Scopes", "tasks:propose")
+      .expect(401);
+    await runtime.close();
   });
 });

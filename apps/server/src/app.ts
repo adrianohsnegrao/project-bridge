@@ -6,6 +6,7 @@ import * as z from "zod/v4";
 import { createDatabase, type DatabaseConnection } from "./database.js";
 import { createMcpFactory } from "./mcp.js";
 import { DomainError, ProjectRepository } from "./repository.js";
+import { AuthenticationError, HttpAuthenticator } from "./auth.js";
 
 const DecisionSchema = z.object({
   decision: z.enum(["approved", "rejected"]),
@@ -27,11 +28,11 @@ const ProjectUpdateSchema = ProjectFieldsSchema.partial().refine(
   { message: "Informe ao menos um campo para atualizar." },
 );
 
-export function createApp(database?: DatabaseConnection) {
+export function createApp(database?: DatabaseConnection, authenticator = new HttpAuthenticator()) {
   const db = database ?? createDatabase();
   const repository = new ProjectRepository(db);
   const app = createMcpExpressApp({ host: "127.0.0.1" });
-  const mcpHandler = createMcpHandler(createMcpFactory(repository), {
+  const mcpHandler = createMcpHandler(createMcpFactory(repository, authenticator), {
     onerror: (error) => console.error("[MCP]", error.message),
   });
   const nodeMcpHandler = toNodeHandler(mcpHandler, {
@@ -88,8 +89,10 @@ export function createApp(database?: DatabaseConnection) {
   app.get("/api/audit", (_request, response) => response.json(repository.listAudit()));
   app.get("/api/mcp/info", (_request, response) => response.json({
     name: "project-bridge",
-    version: "0.5.0",
+    version: "0.6.0",
     transport: "Streamable HTTP",
+    http_authentication: "Bearer token",
+    authenticated_clients: authenticator.configuredClients,
     endpoint: "http://127.0.0.1:8010/mcp",
     default_scopes: ["projects:read", "approvals:read"],
     mutation_scope: "tasks:propose",
@@ -108,6 +111,18 @@ export function createApp(database?: DatabaseConnection) {
     prompts: ["project-status-review"],
   }));
 
+  app.all("/mcp", (request, response, next) => {
+    try {
+      authenticator.authenticate(request.get("authorization"));
+      next();
+    } catch (error) {
+      if (error instanceof AuthenticationError) {
+        response.set("WWW-Authenticate", 'Bearer realm="project-bridge"');
+        return response.status(401).json({ code: error.code, message: error.message });
+      }
+      return next(error);
+    }
+  });
   app.all("/mcp", (request, response) => {
     void nodeMcpHandler(request, response, request.body);
   });

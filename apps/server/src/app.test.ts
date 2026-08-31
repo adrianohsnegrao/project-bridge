@@ -60,6 +60,30 @@ describe("Project Bridge API", () => {
     expect(afterSecondDecision.body.tasks).toHaveLength(5);
     await runtime.close();
   });
+
+  it("publica uma mudança de Resource somente quando a aprovação altera o projeto", async () => {
+    const runtime = createApp(testDatabase());
+    const events: unknown[] = [];
+    const unsubscribe = runtime.mcpHandler.bus.subscribe((event) => events.push(event));
+
+    await request(runtime.app)
+      .post("/api/approvals/approval-demo/decision")
+      .send({ decision: "approved", note: "A mudança deve invalidar o contexto consumido pelos clientes MCP." })
+      .expect(200);
+
+    await request(runtime.app)
+      .post("/api/approvals/approval-demo/decision")
+      .send({ decision: "approved", note: "Repetir a decisão não deve publicar um segundo evento." })
+      .expect(200);
+
+    expect(events).toEqual([{
+      kind: "resource_updated",
+      uri: "project-bridge://projects/atlas",
+    }]);
+
+    unsubscribe();
+    await runtime.close();
+  });
 });
 
 describe("MCP contracts", () => {
@@ -163,6 +187,39 @@ describe("MCP contracts", () => {
     const result = await client.callTool({ name: "list_projects", arguments: {} });
     expect(result.structuredContent).toMatchObject({ ok: true, data: { projects: [{ id: "atlas" }] } });
 
+    await client.close();
+    await runtime.close();
+    await new Promise<void>((resolve, reject) => httpServer.close((error) => error ? reject(error) : resolve()));
+  });
+
+  it("entrega a atualização do Resource por uma assinatura MCP real", async () => {
+    const runtime = createApp(testDatabase());
+    const httpServer = runtime.app.listen(0, "127.0.0.1");
+    await new Promise<void>((resolve) => httpServer.once("listening", resolve));
+    const address = httpServer.address() as AddressInfo;
+    const transport = new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${address.port}/mcp`));
+    const client = new Client(
+      { name: "resource-subscription-test", version: "0.1.0" },
+      { versionNegotiation: { mode: "auto" } },
+    );
+    const resourceUri = "project-bridge://projects/atlas";
+    const updated = new Promise<string>((resolve) => {
+      client.setNotificationHandler("notifications/resources/updated", (notification) => {
+        resolve(notification.params.uri);
+      });
+    });
+
+    await client.connect(transport);
+    const subscription = await client.listen({ resourceSubscriptions: [resourceUri] });
+
+    await request(runtime.app)
+      .post("/api/approvals/approval-demo/decision")
+      .send({ decision: "approved", note: "A assinatura deve receber a mudança deste Resource." })
+      .expect(200);
+
+    await expect(updated).resolves.toBe(resourceUri);
+
+    await subscription.close();
     await client.close();
     await runtime.close();
     await new Promise<void>((resolve, reject) => httpServer.close((error) => error ? reject(error) : resolve()));

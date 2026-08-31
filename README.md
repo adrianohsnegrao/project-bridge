@@ -34,7 +34,8 @@ O foco técnico está no protocolo e no desenho seguro da integração. Nenhum m
 - aprovação ou rejeição humana pela interface;
 - chave idempotente para impedir solicitações duplicadas;
 - trilha de auditoria com cliente, ação, estado e duração;
-- seis testes automatizados, incluindo contrato MCP e transporte HTTP real.
+- notificação de mudança para clientes MCP inscritos quando uma aprovação altera um projeto;
+- oito testes automatizados, incluindo contrato MCP, transporte HTTP e assinatura real.
 
 ## Corte vertical demonstrado
 
@@ -98,6 +99,12 @@ Todas as Tools retornam conteúdo textual e `structuredContent`. As anotações 
 ### Prompt
 
 `project-status-review` orienta um cliente a consultar primeiro o Resource do projeto, diferenciar fatos, riscos e recomendações e usar `propose_task` quando desejar sugerir uma ação.
+
+### Notificações
+
+Clientes que abrirem uma assinatura para `project-bridge://projects/{projectId}` recebem `notifications/resources/updated` quando uma aprovação humana cria uma tarefa naquele projeto. O cliente pode então reler o Resource em vez de trabalhar com contexto desatualizado.
+
+O fluxo usa `subscriptions/listen` e o barramento de eventos do SDK MCP 2.0. Repetir uma decisão já processada não publica outro evento.
 
 ## Como executar
 
@@ -186,9 +193,10 @@ pnpm build      # builds de produção
 4. descoberta de Resources, Tools e Prompt;
 5. saída estruturada e chave idempotente;
 6. bloqueio de Tool sem escopo;
-7. conexão e chamada reais por Streamable HTTP.
+7. conexão e chamada reais por Streamable HTTP;
+8. publicação idempotente e entrega real de atualização por assinatura MCP.
 
-Os itens acima são cobertos por seis casos automatizados; alguns casos validam mais de um contrato dentro do mesmo fluxo.
+Os itens acima são cobertos por oito casos automatizados; alguns casos validam mais de um contrato dentro do mesmo fluxo.
 
 ## Limitações do protótipo
 
@@ -197,7 +205,7 @@ Estas limitações delimitam o primeiro corte e orientam as próximas evoluçõe
 - [ ] autenticação e autorização HTTP reais no lugar dos cabeçalhos demonstrativos;
 - [ ] mais operações mutáveis protegidas pelo mesmo fluxo de aprovação;
 - [ ] criação e edição de projetos pela interface;
-- [ ] notificações MCP quando Resources forem alterados;
+- [x] notificações MCP quando Resources forem alterados;
 - [ ] validação documentada com clientes MCP externos;
 - [ ] persistência preparada para cenários multiusuário e distribuídos;
 - [ ] identidade de usuários e separação de suas permissões.

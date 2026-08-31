@@ -38,7 +38,14 @@ export function createApp(database?: DatabaseConnection) {
   app.post("/api/approvals/:approvalId/decision", (request, response, next) => {
     try {
       const input = DecisionSchema.parse(request.body);
-      response.json(repository.decideApproval(request.params.approvalId, input.decision, input.note));
+      const current = repository.getApproval(request.params.approvalId);
+      const approval = repository.decideApproval(request.params.approvalId, input.decision, input.note);
+
+      if (current?.status === "pending" && input.decision === "approved") {
+        mcpHandler.notify.resourceUpdated(`project-bridge://projects/${approval.project_id}`);
+      }
+
+      response.json(approval);
     } catch (error) {
       next(error);
     }
@@ -46,12 +53,13 @@ export function createApp(database?: DatabaseConnection) {
   app.get("/api/audit", (_request, response) => response.json(repository.listAudit()));
   app.get("/api/mcp/info", (_request, response) => response.json({
     name: "project-bridge",
-    version: "0.1.0",
+    version: "0.2.0",
     transport: "Streamable HTTP",
     endpoint: "http://127.0.0.1:8010/mcp",
     default_scopes: ["projects:read", "approvals:read"],
     mutation_scope: "tasks:propose",
     resources: ["project-bridge://projects", "project-bridge://projects/{projectId}"],
+    notifications: ["notifications/resources/updated"],
     tools: ["list_projects", "get_project_context", "list_project_blockers", "propose_task", "get_approval_status"],
     prompts: ["project-status-review"],
   }));
@@ -71,5 +79,5 @@ export function createApp(database?: DatabaseConnection) {
     return response.status(500).json({ code: "INTERNAL_ERROR", message: "Não foi possível concluir a operação." });
   });
 
-  return { app, db, repository, close: () => mcpHandler.close() };
+  return { app, db, repository, mcpHandler, close: () => mcpHandler.close() };
 }

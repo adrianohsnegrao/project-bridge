@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { DatabaseConnection } from "./database.js";
-import type { ApprovalRequest, ClientContext, Project, Task } from "./types.js";
+import type { ApprovalRequest, Blocker, ClientContext, Project, Task } from "./types.js";
 
 function parseApproval(row: Record<string, unknown>): ApprovalRequest {
   return {
@@ -62,6 +62,14 @@ export class ProjectRepository {
     return this.db.prepare("SELECT * FROM blockers WHERE project_id = ? AND status = 'open' ORDER BY opened_at DESC").all(projectId);
   }
 
+  getTask(projectId: string, taskId: string): Task | null {
+    return (this.db.prepare("SELECT * FROM tasks WHERE id = ? AND project_id = ?").get(taskId, projectId) as Task | undefined) ?? null;
+  }
+
+  getBlocker(projectId: string, blockerId: string): Blocker | null {
+    return (this.db.prepare("SELECT * FROM blockers WHERE id = ? AND project_id = ?").get(blockerId, projectId) as Blocker | undefined) ?? null;
+  }
+
   listApprovals(): ApprovalRequest[] {
     return (this.db.prepare("SELECT * FROM approval_requests ORDER BY CASE status WHEN 'pending' THEN 0 ELSE 1 END, created_at DESC").all() as Record<string, unknown>[]).map(parseApproval);
   }
@@ -80,41 +88,76 @@ export class ProjectRepository {
     justification: string;
     idempotencyKey: string;
   }, client: ClientContext): { approval: ApprovalRequest; reused: boolean } {
-    const existing = this.db.prepare("SELECT * FROM approval_requests WHERE idempotency_key = ?").get(input.idempotencyKey) as Record<string, unknown> | undefined;
-    if (existing) return { approval: parseApproval(existing), reused: true };
-
     if (!this.getProject(input.projectId)) throw new DomainError("PROJECT_NOT_FOUND", "Projeto não encontrado.");
+    return this.createApproval({
+      toolName: "propose_task",
+      operation: "create_task",
+      projectId: input.projectId,
+      arguments: {
+        title: input.title,
+        priority: input.priority,
+        due_date: input.dueDate ?? null,
+        assignee: input.assignee ?? null,
+      },
+      idempotencyKey: input.idempotencyKey,
+      justification: input.justification,
+      scope: "tasks:propose",
+    }, client);
+  }
 
-    const started = performance.now();
-    const id = `approval-${randomUUID()}`;
-    const now = new Date().toISOString();
-    const argumentsValue = {
-      title: input.title,
-      priority: input.priority,
-      due_date: input.dueDate ?? null,
-      assignee: input.assignee ?? null,
-    };
+  proposeTaskUpdate(input: {
+    projectId: string;
+    taskId: string;
+    status?: Task["status"];
+    priority?: Task["priority"];
+    dueDate?: string | null;
+    assignee?: string | null;
+    justification: string;
+    idempotencyKey: string;
+  }, client: ClientContext): { approval: ApprovalRequest; reused: boolean } {
+    const task = this.getTask(input.projectId, input.taskId);
+    if (!task) throw new DomainError("TASK_NOT_FOUND", "Tarefa não encontrada neste projeto.");
+    return this.createApproval({
+      toolName: "propose_task_update",
+      operation: "update_task",
+      projectId: input.projectId,
+      arguments: {
+        task_id: input.taskId,
+        title: task.title,
+        ...(input.status !== undefined ? { status: input.status } : {}),
+        ...(input.priority !== undefined ? { priority: input.priority } : {}),
+        ...(input.dueDate !== undefined ? { due_date: input.dueDate } : {}),
+        ...(input.assignee !== undefined ? { assignee: input.assignee } : {}),
+      },
+      idempotencyKey: input.idempotencyKey,
+      justification: input.justification,
+      scope: "tasks:update:propose",
+    }, client);
+  }
 
-    const create = this.db.transaction(() => {
-      this.db.prepare(`
-        INSERT INTO approval_requests
-        (id, tool_name, operation, project_id, arguments_json, idempotency_key, justification, requested_by, status, created_at)
-        VALUES (?, 'propose_task', 'create_task', ?, ?, ?, ?, ?, 'pending', ?)
-      `).run(id, input.projectId, JSON.stringify(argumentsValue), input.idempotencyKey, input.justification, client.clientName, now);
-
-      this.insertAudit({
-        requestId: id,
-        clientName: client.clientName,
-        action: "propose_task",
-        targetType: "approval",
-        targetId: id,
-        status: "pending_approval",
-        durationMs: performance.now() - started,
-        details: { transport: client.transport, scope: "tasks:propose", idempotency_key: input.idempotencyKey },
-      });
-    });
-    create();
-    return { approval: this.getApproval(id)!, reused: false };
+  proposeBlockerResolution(input: {
+    projectId: string;
+    blockerId: string;
+    resolutionNote: string;
+    justification: string;
+    idempotencyKey: string;
+  }, client: ClientContext): { approval: ApprovalRequest; reused: boolean } {
+    const blocker = this.getBlocker(input.projectId, input.blockerId);
+    if (!blocker) throw new DomainError("BLOCKER_NOT_FOUND", "Impedimento não encontrado neste projeto.");
+    if (blocker.status === "resolved") throw new DomainError("BLOCKER_ALREADY_RESOLVED", "O impedimento já foi resolvido.");
+    return this.createApproval({
+      toolName: "propose_blocker_resolution",
+      operation: "resolve_blocker",
+      projectId: input.projectId,
+      arguments: {
+        blocker_id: input.blockerId,
+        title: blocker.title,
+        resolution_note: input.resolutionNote,
+      },
+      idempotencyKey: input.idempotencyKey,
+      justification: input.justification,
+      scope: "blockers:resolve:propose",
+    }, client);
   }
 
   decideApproval(id: string, decision: "approved" | "rejected", note: string): ApprovalRequest {
@@ -144,6 +187,43 @@ export class ProjectRepository {
           VALUES (@id, @project_id, @title, @status, @priority, @due_date, @assignee, @source, @created_at)
         `).run(task);
         operationResult = { decision, task };
+      } else if (decision === "approved" && current.operation === "update_task") {
+        const args = current.arguments as {
+          task_id: string;
+          status?: Task["status"];
+          priority?: Task["priority"];
+          due_date?: string | null;
+          assignee?: string | null;
+        };
+        const task = this.getTask(current.project_id, args.task_id);
+        if (!task) throw new DomainError("TASK_NOT_FOUND", "Tarefa não encontrada neste projeto.");
+        const updatedTask: Task = {
+          ...task,
+          ...(args.status !== undefined ? { status: args.status } : {}),
+          ...(args.priority !== undefined ? { priority: args.priority } : {}),
+          ...(args.due_date !== undefined ? { due_date: args.due_date } : {}),
+          ...(args.assignee !== undefined ? { assignee: args.assignee } : {}),
+        };
+        this.db.prepare(`
+          UPDATE tasks
+          SET status = @status, priority = @priority, due_date = @due_date, assignee = @assignee
+          WHERE id = @id AND project_id = @project_id
+        `).run(updatedTask);
+        operationResult = { decision, task: updatedTask };
+      } else if (decision === "approved" && current.operation === "resolve_blocker") {
+        const args = current.arguments as { blocker_id: string; resolution_note: string };
+        const blocker = this.getBlocker(current.project_id, args.blocker_id);
+        if (!blocker) throw new DomainError("BLOCKER_NOT_FOUND", "Impedimento não encontrado neste projeto.");
+        this.db.prepare(`
+          UPDATE blockers
+          SET status = 'resolved', resolved_at = ?, resolution_note = ?
+          WHERE id = ? AND project_id = ?
+        `).run(now, args.resolution_note, args.blocker_id, current.project_id);
+        operationResult = { decision, blocker: this.getBlocker(current.project_id, args.blocker_id) };
+      }
+
+      if (decision === "approved") {
+        this.db.prepare("UPDATE projects SET updated_at = ? WHERE id = ?").run(now, current.project_id);
       }
 
       this.db.prepare(`
@@ -165,6 +245,53 @@ export class ProjectRepository {
     });
     result();
     return this.getApproval(id)!;
+  }
+
+  private createApproval(input: {
+    toolName: string;
+    operation: string;
+    projectId: string;
+    arguments: Record<string, unknown>;
+    idempotencyKey: string;
+    justification: string;
+    scope: string;
+  }, client: ClientContext): { approval: ApprovalRequest; reused: boolean } {
+    const existing = this.db.prepare("SELECT * FROM approval_requests WHERE idempotency_key = ?").get(input.idempotencyKey) as Record<string, unknown> | undefined;
+    if (existing) return { approval: parseApproval(existing), reused: true };
+
+    const started = performance.now();
+    const id = `approval-${randomUUID()}`;
+    const now = new Date().toISOString();
+    const create = this.db.transaction(() => {
+      this.db.prepare(`
+        INSERT INTO approval_requests
+        (id, tool_name, operation, project_id, arguments_json, idempotency_key, justification, requested_by, status, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
+      `).run(
+        id,
+        input.toolName,
+        input.operation,
+        input.projectId,
+        JSON.stringify(input.arguments),
+        input.idempotencyKey,
+        input.justification,
+        client.clientName,
+        now,
+      );
+
+      this.insertAudit({
+        requestId: id,
+        clientName: client.clientName,
+        action: input.toolName,
+        targetType: "approval",
+        targetId: id,
+        status: "pending_approval",
+        durationMs: performance.now() - started,
+        details: { transport: client.transport, scope: input.scope, idempotency_key: input.idempotencyKey },
+      });
+    });
+    create();
+    return { approval: this.getApproval(id)!, reused: false };
   }
 
   listAudit(limit = 30) {

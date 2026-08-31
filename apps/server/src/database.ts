@@ -106,6 +106,16 @@ function migrate(db: DatabaseConnection): void {
       created_at TEXT NOT NULL
     );
   `);
+
+  const blockerColumns = new Set(
+    (db.prepare("PRAGMA table_info(blockers)").all() as Array<{ name: string }>).map((column) => column.name),
+  );
+  if (!blockerColumns.has("resolved_at")) {
+    db.exec("ALTER TABLE blockers ADD COLUMN resolved_at TEXT");
+  }
+  if (!blockerColumns.has("resolution_note")) {
+    db.exec("ALTER TABLE blockers ADD COLUMN resolution_note TEXT");
+  }
 }
 
 function seed(db: DatabaseConnection): void {

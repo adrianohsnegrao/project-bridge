@@ -69,7 +69,7 @@ export function resolveStdioClientContext(): ClientContext {
 
 export function buildMcpServer(repository: ProjectRepository, client: ClientContext): McpServer {
   const server = new McpServer(
-    { name: "project-bridge", version: "0.3.0" },
+    { name: "project-bridge", version: "0.4.0" },
     {
       instructions:
         "Consulte o contexto dos projetos antes de propor ações. Ferramentas de proposta nunca executam a mutação diretamente: elas criam uma solicitação para revisão humana.",
@@ -257,6 +257,97 @@ export function buildMcpServer(repository: ProjectRepository, client: ClientCont
     },
   );
 
+  server.registerTool(
+    "propose_task_update",
+    {
+      title: "Propor atualização de tarefa",
+      description: "Cria uma solicitação para alterar uma tarefa existente. A tarefa permanece igual até a aprovação humana.",
+      inputSchema: z.object({
+        project_id: z.string().min(1),
+        task_id: z.string().min(1),
+        status: z.enum(["todo", "in_progress", "blocked", "done"]).optional(),
+        priority: z.enum(["low", "medium", "high"]).optional(),
+        due_date: z.iso.date().nullable().optional(),
+        assignee: z.string().min(2).max(80).nullable().optional(),
+        justification: z.string().min(15).max(500),
+        idempotency_key: z.string().min(8).max(120),
+      }).refine(
+        (value) => value.status !== undefined || value.priority !== undefined || value.due_date !== undefined || value.assignee !== undefined,
+        { message: "Informe ao menos uma alteração para a tarefa." },
+      ),
+      outputSchema: ToolEnvelopeSchema,
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async (args) => {
+      try {
+        requireScope(client, "tasks:update:propose");
+        const result = repository.proposeTaskUpdate({
+          projectId: args.project_id,
+          taskId: args.task_id,
+          status: args.status,
+          priority: args.priority,
+          dueDate: args.due_date,
+          assignee: args.assignee,
+          justification: args.justification,
+          idempotencyKey: args.idempotency_key,
+        }, client);
+        return toolResult({
+          ok: true,
+          data: {
+            approval: result.approval,
+            reused: result.reused,
+            message: result.reused
+              ? "Esta chave idempotente já representa a mesma solicitação."
+              : "Atualização proposta. A tarefa permanece inalterada até a aprovação humana.",
+          },
+        });
+      } catch (error) {
+        return handleToolError(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    "propose_blocker_resolution",
+    {
+      title: "Propor resolução de impedimento",
+      description: "Cria uma solicitação para resolver um impedimento e registrar como ele foi solucionado.",
+      inputSchema: z.object({
+        project_id: z.string().min(1),
+        blocker_id: z.string().min(1),
+        resolution_note: z.string().min(15).max(500),
+        justification: z.string().min(15).max(500),
+        idempotency_key: z.string().min(8).max(120),
+      }),
+      outputSchema: ToolEnvelopeSchema,
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async (args) => {
+      try {
+        requireScope(client, "blockers:resolve:propose");
+        const result = repository.proposeBlockerResolution({
+          projectId: args.project_id,
+          blockerId: args.blocker_id,
+          resolutionNote: args.resolution_note,
+          justification: args.justification,
+          idempotencyKey: args.idempotency_key,
+        }, client);
+        return toolResult({
+          ok: true,
+          data: {
+            approval: result.approval,
+            reused: result.reused,
+            message: result.reused
+              ? "Esta chave idempotente já representa a mesma solicitação."
+              : "Resolução proposta. O impedimento continua aberto até a aprovação humana.",
+          },
+        });
+      } catch (error) {
+        return handleToolError(error);
+      }
+    },
+  );
+
   server.registerPrompt(
     "project-status-review",
     {
@@ -277,7 +368,7 @@ export function buildMcpServer(repository: ProjectRepository, client: ClientCont
             `Consulte primeiro o resource project-bridge://projects/${project_id}.`,
             `Produza uma revisão com foco em '${focus}'.`,
             "Diferencie fatos, riscos e recomendações.",
-            "Não afirme que uma ação foi executada. Para sugerir uma nova tarefa, use propose_task e informe que haverá aprovação humana.",
+            "Não afirme que uma ação foi executada. Use somente Tools de proposta e informe que haverá aprovação humana.",
           ].join("\n"),
         },
       }],

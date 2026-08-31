@@ -114,6 +114,8 @@ describe("MCP contracts", () => {
       "get_project_context",
       "list_project_blockers",
       "propose_task",
+      "propose_task_update",
+      "propose_blocker_resolution",
       "get_approval_status",
     ]));
     expect(resources.resources.map((resource) => resource.uri)).toContain("project-bridge://projects");
@@ -162,6 +164,54 @@ describe("MCP contracts", () => {
     expect(result.structuredContent).toMatchObject({
       ok: false,
       error: { code: "SCOPE_REQUIRED" },
+    });
+
+    await client.close();
+    await server.close();
+  });
+
+  it("mantém atualização de tarefa e resolução de impedimento pendentes até aprovação", async () => {
+    const { client, server, repository } = await connect([
+      "projects:read",
+      "approvals:read",
+      "tasks:update:propose",
+      "blockers:resolve:propose",
+    ]);
+
+    const taskProposal = await client.callTool({
+      name: "propose_task_update",
+      arguments: {
+        project_id: "atlas",
+        task_id: "task-3",
+        status: "done",
+        priority: "high",
+        justification: "A entrega foi validada e deve refletir o estado concluído.",
+        idempotency_key: "contract-update-task-3-done",
+      },
+    });
+    const blockerProposal = await client.callTool({
+      name: "propose_blocker_resolution",
+      arguments: {
+        project_id: "atlas",
+        blocker_id: "block-2",
+        resolution_note: "O ambiente foi estabilizado e passou pela bateria de smoke tests.",
+        justification: "A evidência técnica permite encerrar o impedimento com segurança.",
+        idempotency_key: "contract-resolve-blocker-2",
+      },
+    });
+
+    expect(repository.getTask("atlas", "task-3")?.status).toBe("in_progress");
+    expect(repository.getBlocker("atlas", "block-2")?.status).toBe("open");
+
+    const taskApprovalId = (taskProposal.structuredContent as { data: { approval: { id: string } } }).data.approval.id;
+    const blockerApprovalId = (blockerProposal.structuredContent as { data: { approval: { id: string } } }).data.approval.id;
+    repository.decideApproval(taskApprovalId, "approved", "Atualização conferida com a equipe responsável.");
+    repository.decideApproval(blockerApprovalId, "approved", "Resolução comprovada pelos testes do ambiente.");
+
+    expect(repository.getTask("atlas", "task-3")).toMatchObject({ status: "done", priority: "high" });
+    expect(repository.getBlocker("atlas", "block-2")).toMatchObject({
+      status: "resolved",
+      resolution_note: "O ambiente foi estabilizado e passou pela bateria de smoke tests.",
     });
 
     await client.close();

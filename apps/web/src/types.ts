@@ -46,6 +46,8 @@ export interface Project extends ProjectSummary {
     owner: string | null;
     status: string;
     opened_at: string;
+    resolved_at: string | null;
+    resolution_note: string | null;
   }>;
   documents: Array<{
     id: string;
@@ -63,9 +65,13 @@ export interface Approval {
   project_id: string;
   arguments: {
     title?: string;
+    task_id?: string;
+    blocker_id?: string;
+    status?: string;
     priority?: string;
     due_date?: string | null;
     assignee?: string | null;
+    resolution_note?: string;
   };
   idempotency_key: string;
   justification: string;
@@ -97,6 +103,8 @@ export interface McpInfo {
   endpoint: string;
   default_scopes: string[];
   mutation_scope: string;
+  mutation_scopes: string[];
+  notifications: string[];
   resources: string[];
   tools: string[];
   prompts: string[];

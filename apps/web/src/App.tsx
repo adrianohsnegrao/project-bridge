@@ -13,6 +13,7 @@ const statusLabels = {
   pending: "Pendente",
   approved: "Aprovada",
   rejected: "Rejeitada",
+  resolved: "Resolvido",
 };
 
 function dateLabel(value: string | null): string {
@@ -135,7 +136,7 @@ function ProjectsPage({ projects, project, onSelect }: { projects: ProjectSummar
       <section className="project-summary-strip"><div><small>Responsável</small><strong>{project.owner}</strong></div><div><small>Data alvo</small><strong>{dateLabel(project.target_date)}</strong></div><div><small>Tarefas abertas</small><strong>{counts.pending}</strong></div><div><small>Decisões pendentes</small><strong>{counts.decisions}</strong></div></section>
       <div className="project-columns">
         <section className="panel"><div className="section-title"><div><span>EXECUÇÃO</span><h2>Tarefas</h2></div></div><div className="item-list">{project.tasks.map((task) => <article className="work-item" key={task.id}><StatusPill status={task.status} /><div><strong>{task.title}</strong><small>{task.assignee ?? "Sem responsável"} · {dateLabel(task.due_date)}{task.source === "mcp" ? " · criada após aprovação" : ""}</small></div><span className={`priority ${task.priority}`}>{task.priority === "high" ? "Alta" : task.priority === "medium" ? "Média" : "Baixa"}</span></article>)}</div></section>
-        <section className="panel"><div className="section-title"><div><span>RISCOS</span><h2>Impedimentos</h2></div></div><div className="item-list">{project.blockers.map((blocker) => <article className="blocker-item" key={blocker.id}><span>!</span><div><strong>{blocker.title}</strong><p>{blocker.impact}</p><small>Responsável: {blocker.owner ?? "não definido"}</small></div></article>)}</div></section>
+        <section className="panel"><div className="section-title"><div><span>RISCOS</span><h2>Impedimentos</h2></div></div><div className="item-list">{project.blockers.map((blocker) => <article className="blocker-item" key={blocker.id}><span>{blocker.status === "resolved" ? "✓" : "!"}</span><div><strong>{blocker.title}</strong><p>{blocker.resolution_note ?? blocker.impact}</p><small>Responsável: {blocker.owner ?? "não definido"} · <StatusPill status={blocker.status} /></small></div></article>)}</div></section>
       </div>
       <div className="project-columns">
         <section className="panel"><div className="section-title"><div><span>GOVERNANÇA</span><h2>Decisões</h2></div></div><div className="decision-list">{project.decisions.map((decision) => <article key={decision.id}><div><StatusPill status={decision.status} /><strong>{decision.title}</strong></div><p>{decision.decision}</p><small>{decision.context}</small></article>)}</div></section>
@@ -143,6 +144,33 @@ function ProjectsPage({ projects, project, onSelect }: { projects: ProjectSummar
       </div>
     </>}
   </>;
+}
+
+function approvalScope(approval: Approval): string {
+  if (approval.operation === "update_task") return "tasks:update:propose";
+  if (approval.operation === "resolve_blocker") return "blockers:resolve:propose";
+  return "tasks:propose";
+}
+
+function approvalAction(approval: Approval): string {
+  if (approval.operation === "update_task") return "Aprovar e atualizar tarefa";
+  if (approval.operation === "resolve_blocker") return "Aprovar e resolver impedimento";
+  return "Aprovar e criar tarefa";
+}
+
+function proposalDescription(approval: Approval): string {
+  const values = approval.arguments;
+  if (approval.operation === "update_task") {
+    const changes = [
+      values.status ? `estado: ${statusLabels[values.status as keyof typeof statusLabels] ?? values.status}` : null,
+      values.priority ? `prioridade: ${values.priority}` : null,
+      values.due_date !== undefined ? `prazo: ${dateLabel(values.due_date)}` : null,
+      values.assignee !== undefined ? `responsável: ${values.assignee ?? "sem responsável"}` : null,
+    ].filter(Boolean);
+    return changes.join(" · ");
+  }
+  if (approval.operation === "resolve_blocker") return approval.arguments.resolution_note ?? "Resolver impedimento";
+  return `Prioridade: ${values.priority ?? "não definida"} · Prazo: ${dateLabel(values.due_date ?? null)}`;
 }
 
 function ApprovalsPage({ approvals, onDecision }: { approvals: Approval[]; onDecision: (id: string, decision: "approved" | "rejected", note: string) => Promise<void> }) {
@@ -160,8 +188,19 @@ function ApprovalsPage({ approvals, onDecision }: { approvals: Approval[]; onDec
 
   return <>
     <PageHeading eyebrow="APROVAÇÕES" title="Nenhuma mudança acontece sem você." description="Integrações podem propor ações, mas somente uma decisão humana transforma a solicitação em uma alteração real." />
-    <div className="safety-banner"><span>◎</span><div><strong>Limite de segurança ativo</strong><p>A ferramenta MCP <code>propose_task</code> cria somente uma solicitação. A tarefa ainda não existe.</p></div></div>
-    <section aria-labelledby="pending-title"><div className="section-title page-section-title"><div><span>AGUARDANDO REVISÃO</span><h2 id="pending-title">Solicitações pendentes</h2></div><b className="count-badge">{pending.length}</b></div>{pending.length === 0 ? <EmptyState text="Nenhuma solicitação aguardando revisão." /> : pending.map((approval) => <article className="approval-card" key={approval.id}><header><div><span className="tool-label">Ferramenta · {approval.tool_name}</span><h3>{approval.arguments.title ?? approval.operation}</h3></div><StatusPill status={approval.status} /></header><div className="approval-grid"><div><small>Solicitado por</small><strong>{approval.requested_by}</strong></div><div><small>Projeto</small><strong>{approval.project_id === "atlas" ? "Projeto Atlas" : approval.project_id}</strong></div><div><small>Prioridade</small><strong>{approval.arguments.priority === "high" ? "Alta" : approval.arguments.priority ?? "—"}</strong></div><div><small>Prazo sugerido</small><strong>{dateLabel(approval.arguments.due_date ?? null)}</strong></div></div><div className="justification"><small>Justificativa registrada</small><p>{approval.justification}</p></div><details><summary>Ver contrato e chave idempotente</summary><dl><div><dt>Operação</dt><dd>{approval.operation}</dd></div><div><dt>Chave</dt><dd><code>{approval.idempotency_key}</code></dd></div><div><dt>Escopo exigido</dt><dd><code>tasks:propose</code></dd></div></dl></details><label className="review-note">Observação da decisão<textarea placeholder="Registre por que esta solicitação deve ou não prosseguir." value={notes[approval.id] ?? ""} onChange={(event) => setNotes({ ...notes, [approval.id]: event.target.value })} /></label><div className="approval-actions"><button className="reject-button" disabled={working === approval.id || (notes[approval.id]?.trim().length ?? 0) < 3} onClick={() => void decide(approval, "rejected")}>Rejeitar solicitação</button><button className="approve-button" disabled={working === approval.id || (notes[approval.id]?.trim().length ?? 0) < 3} onClick={() => void decide(approval, "approved")}>{working === approval.id ? "Registrando…" : "Aprovar e criar tarefa"}</button></div></article>)}</section>
+    <div className="safety-banner"><span>◎</span><div><strong>Limite de segurança ativo</strong><p>Tools MCP mutáveis criam somente solicitações. Tarefas e impedimentos permanecem inalterados até uma decisão humana.</p></div></div>
+    <section aria-labelledby="pending-title">
+      <div className="section-title page-section-title"><div><span>AGUARDANDO REVISÃO</span><h2 id="pending-title">Solicitações pendentes</h2></div><b className="count-badge">{pending.length}</b></div>
+      {pending.length === 0 ? <EmptyState text="Nenhuma solicitação aguardando revisão." /> : pending.map((approval) => <article className="approval-card" key={approval.id}>
+        <header><div><span className="tool-label">Ferramenta · {approval.tool_name}</span><h3>{approval.arguments.title ?? approval.operation}</h3></div><StatusPill status={approval.status} /></header>
+        <div className="approval-grid"><div><small>Solicitado por</small><strong>{approval.requested_by}</strong></div><div><small>Projeto</small><strong>{approval.project_id === "atlas" ? "Projeto Atlas" : approval.project_id}</strong></div><div><small>Alvo</small><strong>{approval.arguments.task_id ?? approval.arguments.blocker_id ?? "Nova tarefa"}</strong></div><div><small>Operação</small><strong>{approval.operation.replaceAll("_", " ")}</strong></div></div>
+        <div className="justification"><small>Alteração proposta</small><p>{proposalDescription(approval)}</p></div>
+        <div className="justification"><small>Justificativa registrada</small><p>{approval.justification}</p></div>
+        <details><summary>Ver contrato e chave idempotente</summary><dl><div><dt>Operação</dt><dd>{approval.operation}</dd></div><div><dt>Chave</dt><dd><code>{approval.idempotency_key}</code></dd></div><div><dt>Escopo exigido</dt><dd><code>{approvalScope(approval)}</code></dd></div></dl></details>
+        <label className="review-note">Observação da decisão<textarea placeholder="Registre por que esta solicitação deve ou não prosseguir." value={notes[approval.id] ?? ""} onChange={(event) => setNotes({ ...notes, [approval.id]: event.target.value })} /></label>
+        <div className="approval-actions"><button className="reject-button" disabled={working === approval.id || (notes[approval.id]?.trim().length ?? 0) < 3} onClick={() => void decide(approval, "rejected")}>Rejeitar solicitação</button><button className="approve-button" disabled={working === approval.id || (notes[approval.id]?.trim().length ?? 0) < 3} onClick={() => void decide(approval, "approved")}>{working === approval.id ? "Registrando…" : approvalAction(approval)}</button></div>
+      </article>)}
+    </section>
     {decided.length > 0 && <section className="decided-section"><div className="section-title page-section-title"><div><span>HISTÓRICO</span><h2>Decisões anteriores</h2></div></div>{decided.map((approval) => <article className="decided-row" key={approval.id}><StatusPill status={approval.status} /><div><strong>{approval.arguments.title ?? approval.operation}</strong><small>{approval.requested_by} · {dateLabel(approval.decided_at)}</small></div><p>{approval.decision_note}</p></article>)}</section>}
   </>;
 }
@@ -171,10 +210,10 @@ function ActivityPage({ info, audit }: { info: McpInfo; audit: AuditEvent[] }) {
     <PageHeading eyebrow="INTEGRAÇÕES" title="Uma ponte controlada para clientes MCP." description="Consulte capacidades, contratos e cada operação realizada sem expor a experiência técnica ao usuário comum." />
     <section className="connection-card panel"><div className="connection-status"><span className="status-dot" /><div><strong>MCP disponível</strong><small>{info.transport} · SDK {info.version}</small></div></div><code>{info.endpoint}</code></section>
     <div className="integration-grid">
-      <section className="panel capability-panel"><div className="section-title"><div><span>CAPACIDADES</span><h2>Tools</h2></div><b>{info.tools.length}</b></div>{info.tools.map((tool) => <div className="capability-row" key={tool}><code>{tool}</code><span>{tool === "propose_task" ? "exige aprovação" : "somente leitura"}</span></div>)}</section>
+      <section className="panel capability-panel"><div className="section-title"><div><span>CAPACIDADES</span><h2>Tools</h2></div><b>{info.tools.length}</b></div>{info.tools.map((tool) => <div className="capability-row" key={tool}><code>{tool}</code><span>{tool.startsWith("propose_") ? "exige aprovação" : "somente leitura"}</span></div>)}</section>
       <section className="panel capability-panel"><div className="section-title"><div><span>CONTEXTO</span><h2>Resources e Prompt</h2></div></div>{info.resources.map((resource) => <div className="capability-row" key={resource}><code>{resource}</code><span>resource</span></div>)}{info.prompts.map((prompt) => <div className="capability-row" key={prompt}><code>{prompt}</code><span>prompt</span></div>)}</section>
     </div>
-    <section className="panel scopes-panel"><div className="section-title"><div><span>PERMISSÕES</span><h2>Escopos mínimos</h2></div></div><p>Clientes HTTP sem configuração recebem apenas leitura. Propostas de tarefa exigem um escopo adicional explícito.</p><div className="scope-list">{info.default_scopes.map((scope) => <code key={scope}>{scope}</code>)}<code className="mutation-scope">{info.mutation_scope}</code></div></section>
+    <section className="panel scopes-panel"><div className="section-title"><div><span>PERMISSÕES</span><h2>Escopos mínimos</h2></div></div><p>Clientes HTTP sem configuração recebem apenas leitura. Cada família de proposta exige um escopo adicional explícito.</p><div className="scope-list">{info.default_scopes.map((scope) => <code key={scope}>{scope}</code>)}{info.mutation_scopes.map((scope) => <code className="mutation-scope" key={scope}>{scope}</code>)}</div></section>
     <section className="panel audit-panel"><div className="section-title"><div><span>AUDITORIA</span><h2>Trajetória das operações</h2></div><b>{audit.length} registros</b></div><AuditList events={audit} detailed /></section>
   </>;
 }

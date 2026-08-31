@@ -26,6 +26,18 @@ export interface Task {
   created_at: string;
 }
 
+export interface Blocker {
+  id: string;
+  project_id: string;
+  title: string;
+  impact: string;
+  owner: string | null;
+  status: "open" | "resolved";
+  opened_at: string;
+  resolved_at: string | null;
+  resolution_note: string | null;
+}
+
 export interface ApprovalRequest {
   id: string;
   tool_name: string;

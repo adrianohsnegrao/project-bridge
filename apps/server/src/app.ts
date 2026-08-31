@@ -53,14 +53,23 @@ export function createApp(database?: DatabaseConnection) {
   app.get("/api/audit", (_request, response) => response.json(repository.listAudit()));
   app.get("/api/mcp/info", (_request, response) => response.json({
     name: "project-bridge",
-    version: "0.3.0",
+    version: "0.4.0",
     transport: "Streamable HTTP",
     endpoint: "http://127.0.0.1:8010/mcp",
     default_scopes: ["projects:read", "approvals:read"],
     mutation_scope: "tasks:propose",
+    mutation_scopes: ["tasks:propose", "tasks:update:propose", "blockers:resolve:propose"],
     resources: ["project-bridge://projects", "project-bridge://projects/{projectId}"],
     notifications: ["notifications/resources/updated"],
-    tools: ["list_projects", "get_project_context", "list_project_blockers", "propose_task", "get_approval_status"],
+    tools: [
+      "list_projects",
+      "get_project_context",
+      "list_project_blockers",
+      "propose_task",
+      "propose_task_update",
+      "propose_blocker_resolution",
+      "get_approval_status",
+    ],
     prompts: ["project-status-review"],
   }));
 

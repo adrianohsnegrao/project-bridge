@@ -30,19 +30,19 @@ O foco técnico está no protocolo e no desenho seguro da integração. Nenhum m
 - MCP Resources, Tools e Prompt;
 - schemas Zod de entrada e saída;
 - escopos mínimos por ferramenta;
-- ferramenta mutável que cria apenas uma solicitação pendente;
+- três Tools mutáveis que criam apenas solicitações pendentes;
 - aprovação ou rejeição humana pela interface;
 - chave idempotente para impedir solicitações duplicadas;
 - trilha de auditoria com cliente, ação, estado e duração;
 - notificação de mudança para clientes MCP inscritos quando uma aprovação altera um projeto;
-- oito testes automatizados, incluindo contrato MCP, transporte HTTP e assinatura real.
+- nove testes automatizados, incluindo contratos das mutações, transporte HTTP e assinatura real.
 
 ## Corte vertical demonstrado
 
 ```mermaid
 flowchart LR
     C[Cliente MCP] -->|consulta| R[Resources e Tools de leitura]
-    C -->|propose_task| S[Solicitação pendente]
+    C -->|propose_*| S[Solicitação pendente]
     S --> UI[Caixa de aprovações]
     UI --> D{Decisão humana}
     D -->|Aprovar| T[Tarefa criada]
@@ -52,7 +52,7 @@ flowchart LR
     D --> A
 ```
 
-Uma chamada para `propose_task` nunca cria uma tarefa diretamente. Ela registra intenção, argumentos, justificativa, cliente, escopo e chave idempotente. A alteração só é executada após aprovação humana.
+Uma chamada para qualquer Tool `propose_*` nunca altera o projeto diretamente. Ela registra intenção, argumentos, justificativa, cliente, escopo e chave idempotente. A alteração só é executada após aprovação humana.
 
 ## Arquitetura
 
@@ -93,12 +93,14 @@ O SDK MCP 2.0 utiliza uma factory por requisição no transporte HTTP. A API com
 | `list_project_blockers` | `projects:read` | Somente leitura |
 | `get_approval_status` | `approvals:read` | Somente leitura |
 | `propose_task` | `tasks:propose` | Cria solicitação; exige decisão humana |
+| `propose_task_update` | `tasks:update:propose` | Propõe estado, prioridade, prazo ou responsável |
+| `propose_blocker_resolution` | `blockers:resolve:propose` | Propõe resolução documentada de impedimento |
 
 Todas as Tools retornam conteúdo textual e `structuredContent`. As anotações MCP informam leitura, idempotência, efeito destrutivo e acesso ao mundo externo.
 
 ### Prompt
 
-`project-status-review` orienta um cliente a consultar primeiro o Resource do projeto, diferenciar fatos, riscos e recomendações e usar `propose_task` quando desejar sugerir uma ação.
+`project-status-review` orienta um cliente a consultar primeiro o Resource do projeto, diferenciar fatos, riscos e recomendações e usar somente Tools de proposta quando desejar sugerir uma ação.
 
 ### Notificações
 
@@ -140,7 +142,7 @@ O cliente deve iniciar o script no diretório do servidor. Exemplo genérico:
       "args": ["--dir", "CAMINHO/ABSOLUTO/project-bridge/apps/server", "mcp:stdio"],
       "env": {
         "PROJECT_BRIDGE_CLIENT_NAME": "meu-cliente-local",
-        "PROJECT_BRIDGE_SCOPES": "projects:read,approvals:read,tasks:propose"
+        "PROJECT_BRIDGE_SCOPES": "projects:read,approvals:read,tasks:propose,tasks:update:propose,blockers:resolve:propose"
       }
     }
   }
@@ -159,7 +161,7 @@ Sem configuração adicional, o cliente recebe somente `projects:read` e `approv
 
 ```text
 X-Project-Bridge-Client: meu-cliente-local
-X-Project-Bridge-Scopes: projects:read,approvals:read,tasks:propose
+X-Project-Bridge-Scopes: projects:read,approvals:read,tasks:propose,tasks:update:propose,blockers:resolve:propose
 ```
 
 Esses cabeçalhos são uma política local demonstrativa, não substituem OAuth ou autenticação em uma implantação remota.
@@ -186,7 +188,7 @@ pnpm build      # builds de produção
 - bind somente em `127.0.0.1`;
 - proteção de Host e Origin fornecida pelo adapter Express oficial;
 - acesso de leitura por padrão;
-- escopo separado para proposta de mutação;
+- escopos separados por família de mutação;
 - schemas estritos com Zod;
 - mutação sujeita a aprovação humana;
 - idempotência na fronteira da operação;
@@ -202,16 +204,17 @@ pnpm build      # builds de produção
 5. saída estruturada e chave idempotente;
 6. bloqueio de Tool sem escopo;
 7. conexão e chamada reais por Streamable HTTP;
-8. publicação idempotente e entrega real de atualização por assinatura MCP.
+8. publicação idempotente e entrega real de atualização por assinatura MCP;
+9. atualização de tarefa e resolução de impedimento somente após aprovação.
 
-Os itens acima são cobertos por oito casos automatizados; alguns casos validam mais de um contrato dentro do mesmo fluxo.
+Os itens acima são cobertos por nove casos automatizados; alguns casos validam mais de um contrato dentro do mesmo fluxo.
 
 ## Limitações do protótipo
 
 Estas limitações delimitam o primeiro corte e orientam as próximas evoluções. Elas são mantidas aqui para tornar decisões e trade-offs visíveis.
 
 - [ ] autenticação e autorização HTTP reais no lugar dos cabeçalhos demonstrativos;
-- [ ] mais operações mutáveis protegidas pelo mesmo fluxo de aprovação;
+- [x] mais operações mutáveis protegidas pelo mesmo fluxo de aprovação;
 - [ ] criação e edição de projetos pela interface;
 - [x] notificações MCP quando Resources forem alterados;
 - [x] validação documentada com cliente MCP externo (Codex CLI);

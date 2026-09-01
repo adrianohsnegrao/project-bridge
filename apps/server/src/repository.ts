@@ -58,7 +58,7 @@ export class ProjectRepository {
     };
   }
 
-  createProject(input: Omit<Project, "id" | "updated_at">, actor = "interface-humana"): Project {
+  createProject(input: Omit<Project, "id" | "updated_at" | "version">, actor = "interface-humana"): Project {
     const now = new Date().toISOString();
     const baseId = input.name
       .normalize("NFD")
@@ -73,12 +73,14 @@ export class ProjectRepository {
       id = `${baseId}-${suffix++}`;
     }
 
-    const project: Project = { id, ...input, updated_at: now };
+    const project: Project = { id, ...input, updated_at: now, version: 1 };
     const create = this.db.transaction(() => {
       this.db.prepare(`
         INSERT INTO projects (id, name, summary, objective, status, owner, progress, target_date, updated_at)
         VALUES (@id, @name, @summary, @objective, @status, @owner, @progress, @target_date, @updated_at)
       `).run(project);
+      this.enqueueResourceUpdate("project-bridge://projects", id);
+      this.enqueueResourceUpdate(`project-bridge://projects/${id}`, id);
       this.insertAudit({
         requestId: randomUUID(),
         clientName: actor,
@@ -94,17 +96,21 @@ export class ProjectRepository {
     return project;
   }
 
-  updateProject(projectId: string, input: Partial<Omit<Project, "id" | "updated_at">>, actor = "interface-humana"): Project {
+  updateProject(projectId: string, input: Partial<Omit<Project, "id" | "updated_at" | "version">>, expectedVersion: number, actor = "interface-humana"): Project {
     const current = this.db.prepare("SELECT * FROM projects WHERE id = ?").get(projectId) as Project | undefined;
     if (!current) throw new DomainError("PROJECT_NOT_FOUND", "Projeto não encontrado.");
-    const updated: Project = { ...current, ...input, updated_at: new Date().toISOString() };
+    const updated: Project = { ...current, ...input, updated_at: new Date().toISOString(), version: current.version + 1 };
     const update = this.db.transaction(() => {
-      this.db.prepare(`
+      const result = this.db.prepare(`
         UPDATE projects
         SET name = @name, summary = @summary, objective = @objective, status = @status,
-            owner = @owner, progress = @progress, target_date = @target_date, updated_at = @updated_at
-        WHERE id = @id
-      `).run(updated);
+            owner = @owner, progress = @progress, target_date = @target_date, updated_at = @updated_at,
+            version = @version
+        WHERE id = @id AND version = @expected_version
+      `).run({ ...updated, expected_version: expectedVersion });
+      if (result.changes === 0) throw new DomainError("PROJECT_VERSION_CONFLICT", "O projeto foi alterado por outra pessoa. Recarregue os dados antes de salvar.", 409);
+      this.enqueueResourceUpdate("project-bridge://projects", projectId);
+      this.enqueueResourceUpdate(`project-bridge://projects/${projectId}`, projectId);
       this.insertAudit({
         requestId: randomUUID(),
         clientName: actor,
@@ -285,7 +291,8 @@ export class ProjectRepository {
       }
 
       if (decision === "approved") {
-        this.db.prepare("UPDATE projects SET updated_at = ? WHERE id = ?").run(now, current.project_id);
+        this.db.prepare("UPDATE projects SET updated_at = ?, version = version + 1 WHERE id = ?").run(now, current.project_id);
+        this.enqueueResourceUpdate(`project-bridge://projects/${current.project_id}`, current.project_id);
       }
 
       this.db.prepare(`
@@ -364,6 +371,20 @@ export class ProjectRepository {
     }));
   }
 
+  drainOutbox(publish: (uri: string) => void): number {
+    const events = this.db.prepare("SELECT * FROM outbox_events WHERE processed_at IS NULL ORDER BY created_at, id LIMIT 100").all() as Array<Record<string, unknown>>;
+    for (const event of events) {
+      const payload = JSON.parse(String(event.payload_json)) as { uri: string };
+      publish(payload.uri);
+      this.db.prepare("UPDATE outbox_events SET processed_at = ? WHERE id = ? AND processed_at IS NULL").run(new Date().toISOString(), event.id);
+    }
+    return events.length;
+  }
+
+  pendingOutboxCount(): number {
+    return (this.db.prepare("SELECT COUNT(*) AS count FROM outbox_events WHERE processed_at IS NULL").get() as { count: number }).count;
+  }
+
   recordRead(client: ClientContext, action: string, targetType: string, targetId: string | null, durationMs: number): void {
     this.insertAudit({
       requestId: randomUUID(),
@@ -404,10 +425,16 @@ export class ProjectRepository {
       new Date().toISOString(),
     );
   }
+
+  private enqueueResourceUpdate(uri: string, aggregateId: string): void {
+    this.db.prepare(`INSERT INTO outbox_events (id, event_type, aggregate_id, payload_json, created_at)
+      VALUES (?, 'resource_updated', ?, ?, ?)`)
+      .run(`outbox-${randomUUID()}`, aggregateId, JSON.stringify({ uri }), new Date().toISOString());
+  }
 }
 
 export class DomainError extends Error {
-  constructor(public readonly code: string, message: string) {
+  constructor(public readonly code: string, message: string, public readonly status = 404) {
     super(message);
   }
 }

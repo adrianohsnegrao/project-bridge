@@ -12,6 +12,7 @@ export interface Project {
   progress: number;
   target_date: string;
   updated_at: string;
+  version: number;
 }
 
 export interface Task {

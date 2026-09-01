@@ -24,8 +24,8 @@ const ProjectFieldsSchema = z.object({
   target_date: z.iso.date(),
 });
 
-const ProjectUpdateSchema = ProjectFieldsSchema.partial().refine(
-  (input) => Object.keys(input).length > 0,
+const ProjectUpdateSchema = ProjectFieldsSchema.partial().extend({ expected_version: z.number().int().positive() }).refine(
+  (input) => Object.keys(input).some((key) => key !== "expected_version"),
   { message: "Informe ao menos um campo para atualizar." },
 );
 const LoginSchema = z.object({ email: z.email(), password: z.string().min(8).max(200) });
@@ -45,6 +45,10 @@ export function createApp(
   const nodeMcpHandler = toNodeHandler(mcpHandler, {
     onerror: (error) => console.error("[MCP adapter]", error.message),
   });
+  const flushOutbox = () => repository.drainOutbox((uri) => mcpHandler.notify.resourceUpdated(uri));
+  const outboxTimer = process.env.NODE_ENV === "test" ? undefined : setInterval(flushOutbox, 1000);
+  outboxTimer?.unref();
+  flushOutbox();
 
   app.get("/api/health", (_request, response) => {
     response.json({ status: "ok", service: "project-bridge", mcp_sdk: "2.0.0" });
@@ -88,8 +92,7 @@ export function createApp(
   app.post("/api/projects", requirePermission("projects:write"), (request, response, next) => {
     try {
       const project = repository.createProject(ProjectFieldsSchema.parse(request.body), (response.locals.user as WebUser).email);
-      mcpHandler.notify.resourceUpdated("project-bridge://projects");
-      mcpHandler.notify.resourceUpdated(`project-bridge://projects/${project.id}`);
+      flushOutbox();
       response.status(201).json(project);
     } catch (error) {
       next(error);
@@ -103,9 +106,9 @@ export function createApp(
   app.patch("/api/projects/:projectId", requirePermission("projects:write"), (request, response, next) => {
     try {
       const projectId = String(request.params.projectId);
-      const project = repository.updateProject(projectId, ProjectUpdateSchema.parse(request.body), (response.locals.user as WebUser).email);
-      mcpHandler.notify.resourceUpdated("project-bridge://projects");
-      mcpHandler.notify.resourceUpdated(`project-bridge://projects/${project.id}`);
+      const { expected_version, ...changes } = ProjectUpdateSchema.parse(request.body);
+      const project = repository.updateProject(projectId, changes, expected_version, (response.locals.user as WebUser).email);
+      flushOutbox();
       response.json(project);
     } catch (error) {
       next(error);
@@ -119,9 +122,7 @@ export function createApp(
       const current = repository.getApproval(approvalId);
       const approval = repository.decideApproval(approvalId, input.decision, input.note, (response.locals.user as WebUser).email);
 
-      if (current?.status === "pending" && input.decision === "approved") {
-        mcpHandler.notify.resourceUpdated(`project-bridge://projects/${approval.project_id}`);
-      }
+      if (current?.status === "pending" && input.decision === "approved") flushOutbox();
 
       response.json(approval);
     } catch (error) {
@@ -131,10 +132,11 @@ export function createApp(
   app.get("/api/audit", requirePermission("audit:read"), (_request, response) => response.json(repository.listAudit()));
   app.get("/api/mcp/info", requirePermission("audit:read"), (_request, response) => response.json({
     name: "project-bridge",
-    version: "0.7.0",
+    version: "0.8.0",
     transport: "Streamable HTTP",
     http_authentication: "Bearer token",
     authenticated_clients: authenticator.configuredClients,
+    persistence: { engine: "SQLite", journal_mode: "WAL", optimistic_locking: true, transactional_outbox: true },
     endpoint: "http://127.0.0.1:8010/mcp",
     default_scopes: ["projects:read", "approvals:read"],
     mutation_scope: "tasks:propose",
@@ -174,11 +176,11 @@ export function createApp(
       return response.status(400).json({ code: "INVALID_INPUT", message: "Revise os campos enviados.", issues: error.issues });
     }
     if (error instanceof DomainError) {
-      return response.status(404).json({ code: error.code, message: error.message });
+      return response.status(error.status).json({ code: error.code, message: error.message });
     }
     console.error(error);
     return response.status(500).json({ code: "INTERNAL_ERROR", message: "Não foi possível concluir a operação." });
   });
 
-  return { app, db, repository, mcpHandler, close: () => mcpHandler.close() };
+  return { app, db, repository, mcpHandler, close: async () => { if (outboxTimer) clearInterval(outboxTimer); await mcpHandler.close(); } };
 }

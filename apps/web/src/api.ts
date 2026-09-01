@@ -24,9 +24,9 @@ export const api = {
     method: "POST",
     body: JSON.stringify(input),
   }),
-  updateProject: (id: string, input: ProjectInput) => request<ProjectSummary>(`/projects/${id}`, {
+  updateProject: (id: string, input: ProjectInput, expectedVersion: number) => request<ProjectSummary>(`/projects/${id}`, {
     method: "PATCH",
-    body: JSON.stringify(input),
+    body: JSON.stringify({ ...input, expected_version: expectedVersion }),
   }),
   approvals: () => request<Approval[]>("/approvals"),
   audit: () => request<AuditEvent[]>("/audit"),

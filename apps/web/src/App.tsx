@@ -101,7 +101,7 @@ export default function App() {
               project={project}
               onSelect={async (id) => setProject(await api.project(id))}
               onCreate={async (input) => { const created = await api.createProject(input); await refresh(created.id); }}
-              onUpdate={async (id, input) => { await api.updateProject(id, input); await refresh(id); }}
+              onUpdate={async (id, input) => { if (!project) return; await api.updateProject(id, input, project.version); await refresh(id); }}
               canWrite={canWriteProjects}
             />}
             {page === "approvals" && <ApprovalsPage approvals={approvals} canDecide={canDecide} onDecision={async (id, decision, note) => { await api.decideApproval(id, decision, note); await refresh(); }} />}
@@ -322,6 +322,7 @@ function ActivityPage({ info, audit }: { info: McpInfo; audit: AuditEvent[] }) {
       <section className="panel capability-panel"><div className="section-title"><div><span>CONTEXTO</span><h2>Resources e Prompt</h2></div></div>{info.resources.map((resource) => <div className="capability-row" key={resource}><code>{resource}</code><span>resource</span></div>)}{info.prompts.map((prompt) => <div className="capability-row" key={prompt}><code>{prompt}</code><span>prompt</span></div>)}</section>
     </div>
     <section className="panel scopes-panel"><div className="section-title"><div><span>PERMISSÕES</span><h2>Autenticação e escopos</h2></div><b>{info.authenticated_clients} cliente(s)</b></div><p>O transporte HTTP exige {info.http_authentication}. Os escopos pertencem à credencial configurada no servidor e não podem ser escolhidos pelo cliente.</p><div className="scope-list">{info.default_scopes.map((scope) => <code key={scope}>{scope}</code>)}{info.mutation_scopes.map((scope) => <code className="mutation-scope" key={scope}>{scope}</code>)}</div></section>
+    <section className="panel scopes-panel"><div className="section-title"><div><span>PERSISTÊNCIA</span><h2>Concorrência e entrega confiável</h2></div><b>{info.persistence.engine}</b></div><p>{info.persistence.journal_mode} · controle otimista de versão · outbox transacional para notificações duráveis.</p></section>
     <section className="panel audit-panel"><div className="section-title"><div><span>AUDITORIA</span><h2>Trajetória das operações</h2></div><b>{audit.length} registros</b></div><AuditList events={audit} detailed /></section>
   </>;
 }

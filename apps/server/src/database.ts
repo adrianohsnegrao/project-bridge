@@ -18,6 +18,7 @@ export function createDatabase(path = process.env.PROJECT_BRIDGE_DB ?? defaultDa
   const db = new Database(path);
   db.pragma("foreign_keys = ON");
   db.pragma("journal_mode = WAL");
+  db.pragma("busy_timeout = 5000");
   migrate(db);
   seed(db);
   return db;
@@ -126,6 +127,12 @@ function migrate(db: DatabaseConnection): void {
     CREATE INDEX IF NOT EXISTS idx_web_sessions_expires ON web_sessions(expires_at);
   `);
 
+  db.exec(`CREATE TABLE IF NOT EXISTS schema_migrations (
+    version INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    applied_at TEXT NOT NULL
+  )`);
+
   const blockerColumns = new Set(
     (db.prepare("PRAGMA table_info(blockers)").all() as Array<{ name: string }>).map((column) => column.name),
   );
@@ -134,6 +141,34 @@ function migrate(db: DatabaseConnection): void {
   }
   if (!blockerColumns.has("resolution_note")) {
     db.exec("ALTER TABLE blockers ADD COLUMN resolution_note TEXT");
+  }
+
+  const applied = new Set((db.prepare("SELECT version FROM schema_migrations").all() as Array<{ version: number }>).map((row) => row.version));
+  if (!applied.has(1)) {
+    db.prepare("INSERT INTO schema_migrations (version, name, applied_at) VALUES (1, 'baseline', ?)").run(new Date().toISOString());
+  }
+  if (!applied.has(2)) {
+    const applyV2 = db.transaction(() => {
+      const projectColumns = new Set((db.prepare("PRAGMA table_info(projects)").all() as Array<{ name: string }>).map((column) => column.name));
+      if (!projectColumns.has("version")) db.exec("ALTER TABLE projects ADD COLUMN version INTEGER NOT NULL DEFAULT 1");
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS outbox_events (
+          id TEXT PRIMARY KEY,
+          event_type TEXT NOT NULL,
+          aggregate_id TEXT NOT NULL,
+          payload_json TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          processed_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_outbox_pending ON outbox_events(processed_at, created_at);
+        CREATE INDEX IF NOT EXISTS idx_tasks_project_status ON tasks(project_id, status);
+        CREATE INDEX IF NOT EXISTS idx_blockers_project_status ON blockers(project_id, status);
+        CREATE INDEX IF NOT EXISTS idx_approvals_status_created ON approval_requests(status, created_at);
+        CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_events(created_at DESC);
+      `);
+      db.prepare("INSERT INTO schema_migrations (version, name, applied_at) VALUES (2, 'optimistic-locking-and-outbox', ?)").run(new Date().toISOString());
+    });
+    applyV2();
   }
 }
 

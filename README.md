@@ -25,7 +25,9 @@ O foco técnico está no protocolo e no desenho seguro da integração. Nenhum m
 - criação e edição de projetos pela interface, com formulário acessível e responsivo;
 - tutorial no primeiro acesso;
 - Projeto Atlas com decisões, tarefas, impedimentos e documentos fictícios;
-- banco SQLite local com seed idempotente;
+- banco SQLite local com seed idempotente, WAL, timeout de concorrência e migrações versionadas;
+- concorrência otimista por versão, impedindo que uma edição obsoleta sobrescreva outra;
+- outbox transacional com reprocessamento de notificações MCP após indisponibilidade;
 - servidor MCP construído com o SDK oficial TypeScript 2.0;
 - Streamable HTTP em `/mcp` e execução local por stdio;
 - autenticação Bearer obrigatória no transporte HTTP, com tokens fora do repositório;
@@ -41,7 +43,7 @@ O foco técnico está no protocolo e no desenho seguro da integração. Nenhum m
 - trilha de auditoria com cliente, ação, estado e duração;
 - auditoria separando ações humanas de chamadas feitas por integrações;
 - notificação de mudança para clientes MCP inscritos quando projetos ou aprovações alteram Resources;
-- quinze testes automatizados, incluindo sessões web, RBAC, autenticação MCP, mutações, CRUD humano, transporte HTTP e assinatura real.
+- dezessete testes automatizados, incluindo sessões web, RBAC, concorrência, outbox, autenticação MCP, mutações, CRUD humano, transporte HTTP e assinatura real.
 
 ## Corte vertical demonstrado
 
@@ -80,6 +82,19 @@ apps/
 ```
 
 O SDK MCP 2.0 utiliza uma factory por requisição no transporte HTTP. A API comum e as instâncias MCP compartilham a mesma camada de domínio e o mesmo banco, mas clientes MCP não recebem acesso direto ao SQLite.
+
+### Persistência e concorrência
+
+O protótipo continua usando SQLite porque isso mantém o quickstart simples e reproduzível. A camada de persistência, porém, agora explicita mecanismos necessários quando mais de uma pessoa ou processo pode disputar o mesmo dado:
+
+- `schema_migrations` registra a evolução do schema sem depender de recriar o banco;
+- WAL, `busy_timeout` e índices reduzem contenção e tornam as consultas operacionais previsíveis;
+- cada projeto possui uma `version`; edições enviam `expected_version` e recebem `409 PROJECT_VERSION_CONFLICT` se o dado mudou desde a leitura;
+- a notificação de Resource é gravada na `outbox_events` dentro da mesma transação da alteração;
+- eventos não publicados permanecem pendentes e são reprocessados na inicialização e durante a execução;
+- a entrega da outbox é pelo menos uma vez; a notificação é idempotente porque orienta o cliente a reler o Resource atual.
+
+Isso prepara a fronteira do domínio para concorrência e para uma futura troca do adapter por PostgreSQL, mas não apresenta o SQLite como banco distribuído. Em uma implantação horizontal, o worker da outbox e o mecanismo de claim de eventos também devem ser coordenados pelo banco ou por uma fila.
 
 ## Capacidades MCP
 
@@ -210,6 +225,8 @@ pnpm build      # builds de produção
 - sessões aleatórias armazenadas somente por hash, com expiração de oito horas e logout revogável;
 - cookie de sessão `HttpOnly`, `SameSite=Strict` e `Secure` em produção;
 - autorização RBAC conferida pelo backend em cada mutação e acesso à auditoria;
+- controle de versão otimista para bloquear lost updates;
+- outbox transacional para não perder a invalidação de contexto após uma alteração confirmada;
 - escopos separados por família de mutação;
 - schemas estritos com Zod;
 - mutação sujeita a aprovação humana;
@@ -234,8 +251,10 @@ pnpm build      # builds de produção
 13. sessão obrigatória, cookie protegido e revogação por logout;
 14. leitor autorizado a consultar, mas impedido de editar e auditar;
 15. revisor autorizado a decidir aprovações sem editar projetos, com identidade auditada.
+16. conflito de versão rejeitado sem sobrescrever a edição mais recente;
+17. evento durável mantido na outbox durante falha e republicado na tentativa seguinte.
 
-Os itens acima são cobertos por quinze casos automatizados; alguns casos validam mais de um contrato dentro do mesmo fluxo.
+Os itens acima são cobertos por dezessete casos automatizados; alguns casos validam mais de um contrato dentro do mesmo fluxo.
 
 ## Limitações do protótipo
 
@@ -246,7 +265,7 @@ Estas limitações delimitam o primeiro corte e orientam as próximas evoluçõe
 - [x] criação e edição de projetos pela interface;
 - [x] notificações MCP quando Resources forem alterados;
 - [x] validação documentada com cliente MCP externo (Codex CLI);
-- [ ] persistência preparada para cenários multiusuário e distribuídos;
+- [x] persistência preparada para concorrência multiusuário e futura distribuição, com os limites do SQLite documentados;
 - [x] identidade de usuários e separação de suas permissões.
 
 Os dados permanecem intencionalmente fictícios para que a demonstração possa ser executada e publicada sem expor informações reais.

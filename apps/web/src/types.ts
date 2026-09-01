@@ -21,9 +21,10 @@ export interface ProjectSummary {
   progress: number;
   target_date: string;
   updated_at: string;
+  version: number;
 }
 
-export type ProjectInput = Omit<ProjectSummary, "id" | "updated_at">;
+export type ProjectInput = Omit<ProjectSummary, "id" | "updated_at" | "version">;
 
 export interface Project extends ProjectSummary {
   decisions: Array<{
@@ -106,6 +107,7 @@ export interface McpInfo {
   transport: string;
   http_authentication: string;
   authenticated_clients: number;
+  persistence: { engine: string; journal_mode: string; optimistic_locking: boolean; transactional_outbox: boolean };
   endpoint: string;
   default_scopes: string[];
   mutation_scope: string;

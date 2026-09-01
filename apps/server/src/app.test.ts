@@ -109,7 +109,7 @@ describe("Project Bridge API", () => {
 
     const updated = await request(runtime.app)
       .patch(`/api/projects/${created.body.id}`)
-      .send({ status: "at_risk", progress: 35, summary: "Centraliza procedimentos validados e referências para toda a equipe." })
+      .send({ status: "at_risk", progress: 35, summary: "Centraliza procedimentos validados e referências para toda a equipe.", expected_version: created.body.version })
       .expect(200);
     expect(updated.body).toMatchObject({ status: "at_risk", progress: 35 });
 
@@ -138,17 +138,64 @@ describe("Project Bridge API", () => {
       progress: 0,
       target_date: "2026-12-15",
     }).expect(201);
-    await request(runtime.app).patch(`/api/projects/${created.body.id}`).send({ progress: 20 }).expect(200);
+    await request(runtime.app).patch(`/api/projects/${created.body.id}`).send({ progress: 20, expected_version: created.body.version }).expect(200);
 
-    expect(events).toEqual([
+    expect(events).toHaveLength(4);
+    expect(events).toEqual(expect.arrayContaining([
       { kind: "resource_updated", uri: "project-bridge://projects" },
       { kind: "resource_updated", uri: `project-bridge://projects/${created.body.id}` },
       { kind: "resource_updated", uri: "project-bridge://projects" },
       { kind: "resource_updated", uri: `project-bridge://projects/${created.body.id}` },
-    ]);
+    ]));
 
     unsubscribe();
     await runtime.close();
+  });
+
+  it("rejeita uma edição obsoleta sem sobrescrever a versão mais recente", async () => {
+    const runtime = createApp(testDatabase());
+    const before = await request(runtime.app).get("/api/projects/atlas").expect(200);
+
+    const firstUpdate = await request(runtime.app)
+      .patch("/api/projects/atlas")
+      .send({ progress: 70, expected_version: before.body.version })
+      .expect(200);
+    expect(firstUpdate.body).toMatchObject({ progress: 70, version: before.body.version + 1 });
+
+    const conflict = await request(runtime.app)
+      .patch("/api/projects/atlas")
+      .send({ progress: 5, expected_version: before.body.version })
+      .expect(409);
+    expect(conflict.body).toMatchObject({ code: "PROJECT_VERSION_CONFLICT" });
+
+    const after = await request(runtime.app).get("/api/projects/atlas").expect(200);
+    expect(after.body).toMatchObject({ progress: 70, version: before.body.version + 1 });
+    await runtime.close();
+  });
+
+  it("mantém eventos na outbox após falha e os republica com segurança", () => {
+    const repository = new ProjectRepository(testDatabase());
+    const created = repository.createProject({
+      name: "Operação Resiliente",
+      summary: "Valida a entrega durável de notificações para consumidores MCP.",
+      objective: "Não perder mudanças mesmo quando a publicação estiver indisponível.",
+      status: "active",
+      owner: "Marina Costa",
+      progress: 0,
+      target_date: "2026-12-20",
+    });
+    expect(repository.pendingOutboxCount()).toBe(2);
+
+    expect(() => repository.drainOutbox(() => { throw new Error("publicador indisponível"); })).toThrow("publicador indisponível");
+    expect(repository.pendingOutboxCount()).toBe(2);
+
+    const published: string[] = [];
+    expect(repository.drainOutbox((uri) => published.push(uri))).toBe(2);
+    expect(published).toEqual(expect.arrayContaining([
+      "project-bridge://projects",
+      `project-bridge://projects/${created.id}`,
+    ]));
+    expect(repository.pendingOutboxCount()).toBe(0);
   });
 });
 

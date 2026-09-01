@@ -1,126 +1,168 @@
 # Project Bridge
 
-Central local de projetos com integração MCP, contratos tipados, aprovação humana e auditoria de operações.
+Uma ponte segura entre agentes de IA e um sistema de projetos: a IA pode consultar contexto e propor mudanças, mas uma pessoa continua responsável por decidir o que realmente será alterado.
 
 [![CI](https://github.com/adrianohsnegrao/project-bridge/actions/workflows/ci.yml/badge.svg)](https://github.com/adrianohsnegrao/project-bridge/actions/workflows/ci.yml)
 [![Node.js](https://img.shields.io/badge/Node.js-22%2B-339933?logo=nodedotjs&logoColor=white)](https://nodejs.org/)
-[![MCP](https://img.shields.io/badge/Model_Context_Protocol-2.0-6B5CE7)](https://modelcontextprotocol.io/)
+[![MCP](https://img.shields.io/badge/MCP-SDK-5A45FF)](https://modelcontextprotocol.io/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-O Project Bridge demonstra como disponibilizar contexto e ações para clientes de IA sem entregar acesso irrestrito aos dados e sem transformar a experiência do usuário em um chatbot.
-
-> Estado atual: protótipo funcional em evolução, preparado para execução e avaliação local.
+> **Em resumo:** o Project Bridge não é um Jira completo e não é um gerenciador de APIs. É um protótipo de integração e governança para agentes de IA, usando a gestão de projetos como caso de uso.
 
 ![Tela de aprovação humana do Project Bridge](docs/images/aprovacao-humana.png)
 
-## Por que este projeto existe
+## Entenda o projeto em dois minutos
 
-Muitos exemplos de integração com IA entregam ferramentas poderosas ao modelo, mas não deixam claro quem pode executar cada ação, como evitar duplicidade ou como uma pessoa mantém o controle. Este projeto explora exatamente essa fronteira: um servidor MCP fornece contexto estruturado e permite propor uma mudança, enquanto autorização, validação, aprovação e auditoria permanecem responsabilidades explícitas da aplicação.
+### O que ele é
 
-O foco técnico está no protocolo e no desenho seguro da integração. Nenhum modelo generativo é necessário para executar a demonstração ou a suíte de testes.
+O Project Bridge demonstra como permitir que um agente de IA participe de um fluxo de trabalho real sem receber acesso irrestrito ao sistema.
 
-## O que já funciona
+Por meio do [Model Context Protocol (MCP)](https://modelcontextprotocol.io/), um cliente de IA pode:
 
-- interface em português com visão geral, projetos, aprovações e auditoria;
-- criação e edição de projetos pela interface, com formulário acessível e responsivo;
-- tutorial no primeiro acesso;
-- Projeto Atlas com decisões, tarefas, impedimentos e documentos fictícios;
-- banco SQLite local com seed idempotente, WAL, timeout de concorrência e migrações versionadas;
-- concorrência otimista por versão, impedindo que uma edição obsoleta sobrescreva outra;
-- outbox transacional com reprocessamento de notificações MCP após indisponibilidade;
-- tracing com OpenTelemetry JS para requisições HTTP e operações internas;
-- exportação local de spans para inspeção sem infraestrutura adicional e OTLP/HTTP opcional;
-- servidor MCP construído com o SDK oficial TypeScript 2.0;
-- Streamable HTTP em `/mcp` e execução local por stdio;
-- autenticação Bearer obrigatória no transporte HTTP, com tokens fora do repositório;
-- identidade e escopos vinculados à credencial no servidor;
-- login web com senha derivada por `scrypt` e sessão revogável em cookie `HttpOnly`;
-- RBAC aplicado no backend para administrador, gerente, revisor e leitor;
-- MCP Resources, Tools e Prompt;
-- schemas Zod de entrada e saída;
-- escopos mínimos por ferramenta;
-- três Tools mutáveis que criam apenas solicitações pendentes;
-- aprovação ou rejeição humana pela interface;
-- chave idempotente para impedir solicitações duplicadas;
-- trilha de auditoria com cliente, ação, estado e duração;
-- auditoria separando ações humanas de chamadas feitas por integrações;
-- notificação de mudança para clientes MCP inscritos quando projetos ou aprovações alteram Resources;
-- dezoito testes automatizados, incluindo sessões web, RBAC, concorrência, outbox, OpenTelemetry, autenticação MCP, mutações, CRUD humano, transporte HTTP e assinatura real.
+- consultar apenas o contexto necessário de um projeto;
+- ler tarefas, bloqueios, riscos e decisões;
+- propor a criação ou atualização de uma tarefa;
+- propor a resolução de um bloqueio;
+- acompanhar o resultado de uma solicitação.
 
-## Corte vertical demonstrado
+As propostas não alteram os dados imediatamente. Elas entram em uma fila de revisão, na qual um usuário autorizado pode aprovar ou rejeitar a ação. O backend valida identidade, permissões, escopo, versão dos dados e idempotência antes de realizar qualquer mudança.
+
+Isso separa claramente duas responsabilidades:
+
+- **a IA sugere**, com base no contexto e nas ferramentas permitidas;
+- **o sistema e a pessoa decidem**, aplicando regras de autorização e governança.
+
+### O que ele não é
+
+- **Não é um gerenciador de projetos completo.** A interface apresenta projetos, tarefas, riscos, decisões e bloqueios para demonstrar o domínio, mas não oferece toda a experiência de produtos como Jira, Linear ou Trello.
+- **Não é um gerenciador de APIs.** A API e o servidor MCP são os meios de integração, não o produto final.
+- **Não é um chatbot.** O foco está em contexto estruturado, ferramentas tipadas, autorização, aprovação e rastreabilidade.
+- **Não contém um modelo generativo embutido.** Ele expõe uma infraestrutura que pode ser consumida por clientes compatíveis com MCP, como o Codex.
+- **Não aprova ou rejeita projetos.** A aprovação decide se uma ação proposta — por exemplo, criar uma tarefa — deve ou não modificar o projeto.
+
+No protótipo atual, tarefas, riscos, decisões e bloqueios aparecem como resumos dentro do projeto e não possuem páginas individuais clicáveis. Essa é uma limitação deliberada de escopo: o objetivo principal é demonstrar a integração segura com agentes de IA, e não reproduzir todas as funções de um sistema de gestão.
+
+### Para quem este repositório é útil
+
+- **Usuários e avaliadores:** para visualizar um fluxo em que uma sugestão automatizada sempre passa por controle humano.
+- **Recrutadores:** para avaliar aplicação prática de MCP, human-in-the-loop, segurança, idempotência, concorrência, observabilidade e testes.
+- **Desenvolvedores:** para estudar uma referência local e reproduzível de servidor MCP e aplicação web compartilhando o mesmo domínio.
+
+## Exemplo prático
+
+Imagine que um agente esteja analisando o projeto fictício **Atlas** e identifique que uma tarefa crítica precisa mudar de prioridade:
+
+1. O agente consulta o contexto permitido do projeto pelo MCP.
+2. Ele chama a ferramenta `propose_task_update`, informando a alteração e a justificativa.
+3. O servidor valida o token, os escopos, os argumentos e a versão atual da tarefa.
+4. A proposta aparece na Central de Aprovações como **pendente**.
+5. Uma pessoa revisa a ação, os dados anteriores, a alteração proposta e a justificativa.
+6. Ao aprovar, o backend atualiza a tarefa; ao rejeitar, nenhuma alteração é aplicada ao projeto.
+7. A decisão e a execução ficam registradas na auditoria e nos traces.
+8. Clientes MCP conectados podem receber a notificação de que o recurso foi atualizado.
+
+| Decisão | Resultado |
+|---|---|
+| Aprovar `propose_task` | Uma nova tarefa é criada no projeto. |
+| Aprovar `propose_task_update` | Estado, prioridade, prazo ou responsável da tarefa são atualizados. |
+| Aprovar `propose_blocker_resolution` | A resolução é registrada e o bloqueio é marcado como resolvido. |
+| Rejeitar qualquer proposta | A decisão é registrada, mas o domínio do projeto permanece inalterado. |
+| Repetir a mesma requisição | A chave idempotente impede a criação ou execução duplicada. |
+
+Depois da decisão, o cartão permanece na Central de Aprovações como histórico auditável. Os itens internos do projeto continuam exibidos como resumos porque não fazem parte de um módulo completo de gestão nesta versão.
+
+## Problema que a arquitetura resolve
+
+Dar acesso direto de um agente ao banco de dados ou a endpoints administrativos cria riscos difíceis de controlar:
+
+- exposição de contexto além do necessário;
+- escalada indevida de permissões;
+- operações duplicadas após retries;
+- sobrescrita de alterações concorrentes;
+- falhas entre a gravação de uma mudança e a publicação de um evento;
+- ausência de evidências sobre quem propôs, aprovou e executou uma ação.
+
+O Project Bridge trata o agente como um participante limitado do sistema. Contexto e ferramentas são publicados por contrato; mutações são propostas; autorizações são verificadas no servidor; e toda ação relevante produz rastros verificáveis.
+
+## Fluxo principal
 
 ```mermaid
 flowchart LR
-    C[Cliente MCP] -->|consulta| R[Resources e Tools de leitura]
-    C -->|propose_*| S[Solicitação pendente]
-    S --> UI[Caixa de aprovações]
-    UI --> D{Decisão humana}
-    D -->|Aprovar| T[Tarefa criada]
-    D -->|Rejeitar| X[Nenhuma alteração]
-    R --> A[Auditoria]
-    S --> A
-    D --> A
+    A[Cliente de IA] -->|Consulta| M[Servidor MCP]
+    M -->|Resources e tools de leitura| C[Contexto do projeto]
+    A -->|Tool propose_*| V[Validação e autorização]
+    V --> P[Solicitação pendente]
+    P --> H{Revisão humana}
+    H -->|Rejeitar| N[Nenhuma mudança]
+    H -->|Aprovar| D[Alteração no domínio]
+    D --> O[Outbox transacional]
+    O --> R[Recurso atualizado]
+    M --> T[Auditoria e OpenTelemetry]
+    H --> T
+    D --> T
 ```
 
-Uma chamada para qualquer Tool `propose_*` nunca altera o projeto diretamente. Ela registra intenção, argumentos, justificativa, cliente, escopo e chave idempotente. A alteração só é executada após aprovação humana.
+As tools `propose_*` nunca executam a mudança de domínio diretamente. A mutação só ocorre após uma decisão humana válida e uma nova verificação das regras no backend.
+
+## O que pode ser avaliado no portfólio
+
+- servidor MCP com resources, tools, prompt, notificações e contratos tipados;
+- transportes HTTP Streamable e `stdio`;
+- validação de entrada e saída com Zod;
+- autenticação Bearer e autorização por escopos MCP;
+- senhas derivadas com `scrypt`, sessões revogáveis e RBAC;
+- fluxo human-in-the-loop para todas as mutações propostas por IA;
+- idempotência na criação e na decisão de solicitações;
+- concorrência otimista com versão esperada;
+- outbox transacional com nova tentativa após falha de publicação;
+- notificações `resources/updated` após publicação;
+- auditoria persistida de leituras, propostas e decisões;
+- spans OpenTelemetry e exportação OTLP opcional;
+- testes de contrato executados sem depender de um modelo pago;
+- CI para testes, tipos, build e auditoria de dependências.
+
+## Experiência disponível na interface
+
+A aplicação web foi desenhada como um produto administrativo comum, sem aparência de chatbot:
+
+- login com perfis de administrador, revisor e visualizador;
+- tutorial no primeiro acesso;
+- visão geral dos projetos e indicadores;
+- criação e edição das informações principais de um projeto;
+- projeto fictício Atlas com dados prontos para demonstração;
+- resumos de tarefas, riscos, decisões e bloqueios;
+- Central de Aprovações com comparação entre estado atual e alteração proposta;
+- histórico de solicitações aprovadas e rejeitadas;
+- página de integrações com instruções MCP;
+- visualização de auditoria;
+- visualizador de traces com duração, atributos, erros e correlação.
 
 ## Arquitetura
 
 ```text
-apps/
+project-bridge/
 ├── server/
-│   ├── API Express
-│   ├── MCP Streamable HTTP
-│   ├── MCP stdio
-│   ├── domínio e permissões
-│   ├── SQLite
-│   └── contract tests
-└── web/
-    ├── React + TypeScript
-    ├── tutorial
-    ├── central de projetos
-    ├── aprovações
-    └── auditoria
+│   ├── API HTTP e aplicação web
+│   ├── autenticação, sessões e RBAC
+│   ├── servidor MCP HTTP e stdio
+│   ├── domínio compartilhado
+│   ├── SQLite, migrations e outbox
+│   ├── auditoria e OpenTelemetry
+│   └── testes de contrato
+├── web/
+│   ├── Central de Projetos
+│   ├── Central de Aprovações
+│   ├── Integrações e auditoria
+│   └── visualizador de traces
+├── docs/
+│   ├── imagens da demonstração
+│   └── validação com o Codex
+└── .codex/
+    └── exemplo de configuração MCP
 ```
 
-O SDK MCP 2.0 utiliza uma factory por requisição no transporte HTTP. A API comum e as instâncias MCP compartilham a mesma camada de domínio e o mesmo banco, mas clientes MCP não recebem acesso direto ao SQLite.
-
-### Persistência e concorrência
-
-O protótipo continua usando SQLite porque isso mantém o quickstart simples e reproduzível. A camada de persistência, porém, agora explicita mecanismos necessários quando mais de uma pessoa ou processo pode disputar o mesmo dado:
-
-- `schema_migrations` registra a evolução do schema sem depender de recriar o banco;
-- WAL, `busy_timeout` e índices reduzem contenção e tornam as consultas operacionais previsíveis;
-- cada projeto possui uma `version`; edições enviam `expected_version` e recebem `409 PROJECT_VERSION_CONFLICT` se o dado mudou desde a leitura;
-- a notificação de Resource é gravada na `outbox_events` dentro da mesma transação da alteração;
-- eventos não publicados permanecem pendentes e são reprocessados na inicialização e durante a execução;
-- a entrega da outbox é pelo menos uma vez; a notificação é idempotente porque orienta o cliente a reler o Resource atual.
-
-Isso prepara a fronteira do domínio para concorrência e para uma futura troca do adapter por PostgreSQL, mas não apresenta o SQLite como banco distribuído. Em uma implantação horizontal, o worker da outbox e o mecanismo de claim de eventos também devem ser coordenados pelo banco ou por uma fila.
-
-### Observabilidade com OpenTelemetry
-
-O serviço utiliza o SDK oficial OpenTelemetry para produzir spans reais, não apenas linhas de log com aparência de trace. A instrumentação cobre:
-
-- cada requisição HTTP, com método, caminho, status e duração;
-- operações internas de criação e edição de projeto;
-- decisão de aprovação;
-- publicação da outbox;
-- relação pai-filho entre a requisição e a operação de domínio;
-- cabeçalho W3C `traceparent` nas respostas para correlação.
-
-Um exporter local persiste até 500 spans na tabela `telemetry_spans`, permitindo que a interface mostre traces, IDs, atributos, erros e duração sem exigir conta ou serviço externo. O endpoint protegido `GET /api/observability` fornece o mesmo diagnóstico em JSON.
-
-Para enviar os traces também a um Collector ou backend compatível com OTLP/HTTP, defina uma das variáveis antes de iniciar o servidor:
-
-```powershell
-$env:OTEL_EXPORTER_OTLP_ENDPOINT='http://127.0.0.1:4318'
-# ou o endpoint completo de traces:
-$env:OTEL_EXPORTER_OTLP_TRACES_ENDPOINT='http://127.0.0.1:4318/v1/traces'
-pnpm dev
-```
-
-O exporter local continua ativo quando OTLP é habilitado. A instrumentação evita corpo de requisição, cookies, senhas e tokens; somente atributos operacionais explicitamente permitidos são gravados. Em produção, retenção, amostragem e controles do backend devem ser definidos conforme volume e política de dados. A documentação oficial recomenda o Collector para exportação em produção: [OpenTelemetry JavaScript — Exporters](https://opentelemetry.io/docs/languages/js/exporters/).
+A API web e os dois transportes MCP usam o mesmo domínio e a mesma camada de persistência. O servidor MCP não acessa o arquivo SQLite diretamente, evitando regras duplicadas ou caminhos alternativos de autorização.
 
 ## Capacidades MCP
 
@@ -128,191 +170,205 @@ O exporter local continua ativo quando OTLP é habilitado. A instrumentação ev
 
 | URI | Conteúdo |
 |---|---|
-| `project-bridge://projects` | Catálogo resumido dos projetos |
-| `project-bridge://projects/{projectId}` | Contexto completo de um projeto |
+| `project-bridge://projects` | Catálogo resumido dos projetos disponíveis. |
+| `project-bridge://projects/{projectId}` | Contexto completo de um projeto: objetivo, tarefas, decisões, impedimentos e documentos. |
 
 ### Tools
 
-| Tool | Escopo | Comportamento |
-|---|---|---|
-| `list_projects` | `projects:read` | Somente leitura |
-| `get_project_context` | `projects:read` | Somente leitura |
-| `list_project_blockers` | `projects:read` | Somente leitura |
-| `get_approval_status` | `approvals:read` | Somente leitura |
-| `propose_task` | `tasks:propose` | Cria solicitação; exige decisão humana |
-| `propose_task_update` | `tasks:update:propose` | Propõe estado, prioridade, prazo ou responsável |
-| `propose_blocker_resolution` | `blockers:resolve:propose` | Propõe resolução documentada de impedimento |
-
-Todas as Tools retornam conteúdo textual e `structuredContent`. As anotações MCP informam leitura, idempotência, efeito destrutivo e acesso ao mundo externo.
+| Tool | Comportamento |
+|---|---|
+| `list_projects` | Lista projetos com estado, responsável, progresso e data-alvo. |
+| `get_project_context` | Retorna o contexto estruturado de um projeto. |
+| `list_project_blockers` | Lista os impedimentos abertos de um projeto. |
+| `propose_task` | Cria uma solicitação pendente para uma nova tarefa. |
+| `propose_task_update` | Cria uma solicitação pendente para atualizar uma tarefa existente. |
+| `propose_blocker_resolution` | Cria uma solicitação pendente para resolver um bloqueio. |
+| `get_approval_status` | Consulta o estado e o resultado de uma solicitação. |
 
 ### Prompt
 
-`project-status-review` orienta um cliente a consultar primeiro o Resource do projeto, diferenciar fatos, riscos e recomendações e usar somente Tools de proposta quando desejar sugerir uma ação.
+`project-status-review` entrega uma sequência reutilizável para revisar o contexto estruturado com foco executivo, em riscos ou em entrega. O prompt orienta o cliente a separar fatos, riscos e recomendações e a nunca afirmar que uma proposta já foi executada.
 
 ### Notificações
 
-Clientes que abrirem uma assinatura para `project-bridge://projects/{projectId}` recebem `notifications/resources/updated` quando uma aprovação humana altera o trabalho ou quando uma pessoa edita o projeto pela interface. Criações e edições também invalidam o catálogo `project-bridge://projects`. O cliente pode então reler o Resource em vez de trabalhar com contexto desatualizado.
+Após a publicação de um evento da outbox, clientes MCP inscritos recebem `notifications/resources/updated`. Assim, uma alteração aprovada pode invalidar o contexto anteriormente lido pelo agente.
 
-O fluxo usa `subscriptions/listen` e o barramento de eventos do SDK MCP 2.0. Repetir uma decisão já processada não publica outro evento.
+## Persistência e concorrência
+
+- SQLite com migrations versionadas e aplicação automática;
+- transações para dados de domínio, auditoria e eventos da outbox;
+- `expectedVersion` nas propostas de atualização;
+- conflito explícito quando a tarefa mudou depois da proposta;
+- `Idempotency-Key` na criação de solicitações;
+- decisão idempotente no backend;
+- worker periódico para publicar eventos pendentes;
+- evento marcado como processado somente depois da publicação;
+- eventos preservados após falha para nova tentativa no ciclo seguinte.
+
+O desenho é apropriado para execução local e instância única. SQLite não é apresentado como substituto de uma infraestrutura distribuída de produção.
+
+## Segurança demonstrada
+
+- autenticação Bearer no MCP HTTP;
+- comparação de tokens MCP por hash e em tempo constante;
+- escopos específicos para leitura, consulta de aprovações e cada tipo de proposta, como `projects:read`, `approvals:read` e `tasks:propose`;
+- autorização por escopo específico para cada categoria de tool;
+- sessões web revogáveis;
+- RBAC no backend para leitura, revisão e administração;
+- validação estrita de schemas;
+- bloqueio de mutações sem aprovação humana;
+- auditoria de leituras, propostas e decisões;
+- traces limitados a metadados operacionais, sem registrar tokens ou senhas.
+
+## Observabilidade
+
+Cada operação instrumentada recebe `traceId` e `spanId`. Os spans são persistidos localmente para a tela de inspeção e também podem ser enviados a um coletor compatível com OTLP.
+
+Exemplos de operações instrumentadas:
+
+- requisições HTTP, incluindo chamadas ao endpoint MCP;
+- criação e atualização de projetos;
+- decisão humana;
+- tentativa de publicação da outbox.
+
+Para habilitar exportação externa:
+
+```powershell
+$env:OTEL_EXPORTER_OTLP_ENDPOINT = "http://localhost:4318"
+$env:OTEL_SERVICE_NAME = "project-bridge"
+pnpm dev
+```
+
+Sem `OTEL_EXPORTER_OTLP_ENDPOINT`, o projeto continua funcionando apenas com persistência local. Consulte a [documentação oficial do OpenTelemetry](https://opentelemetry.io/docs/).
 
 ## Como executar
 
 ### Requisitos
 
-- Node.js 22 ou superior
-- pnpm
+- Node.js 22 ou superior;
+- pnpm 11 ou superior.
 
-Na raiz do projeto:
+### Instalação
 
-```bash
+```powershell
 pnpm install
 pnpm dev
 ```
 
-Acesse:
+Endereços locais:
 
-- interface: [http://127.0.0.1:5174](http://127.0.0.1:5174)
-- API: [http://127.0.0.1:8010/api/health](http://127.0.0.1:8010/api/health)
-- MCP: `http://127.0.0.1:8010/mcp`
+- interface: [http://127.0.0.1:5174](http://127.0.0.1:5174);
+- API e MCP: [http://127.0.0.1:8010](http://127.0.0.1:8010);
+- endpoint MCP: [http://127.0.0.1:8010/mcp](http://127.0.0.1:8010/mcp).
 
-### Contas fictícias locais
+O frontend é servido pelo Vite em desenvolvimento. Alterações no backend exigem reiniciar `pnpm dev`.
 
-| Perfil | E-mail | Senha | Capacidades |
+### Contas de demonstração
+
+| Perfil | E-mail | Senha | Permissões |
 |---|---|---|---|
-| Administrador | `admin@projectbridge.local` | `admin12345` | Todas |
-| Revisor | `revisor@projectbridge.local` | `revisor12345` | Leitura e decisões de aprovação |
-| Leitor | `leitor@projectbridge.local` | `leitor12345` | Somente leitura |
+| Administrador | `admin@projectbridge.local` | `admin12345` | Configuração, revisão e auditoria. |
+| Revisor | `revisor@projectbridge.local` | `revisor12345` | Consulta e decisão de solicitações. |
+| Visualizador | `leitor@projectbridge.local` | `leitor12345` | Somente leitura. |
 
-Essas credenciais existem apenas para tornar o protótipo reproduzível e usam dados fictícios. Uma implantação real deve provisionar usuários externamente, exigir troca inicial e aplicar política de senha.
+Essas credenciais são exclusivamente locais e não devem ser reutilizadas em produção.
+
+### Roteiro rápido de demonstração
+
+1. Entre como administrador.
+2. Conclua ou pule o tutorial inicial.
+3. Abra o projeto Atlas e observe tarefas, riscos, decisões e bloqueios de exemplo.
+4. Acesse **Integrações** para visualizar endpoint, transportes, resources, tools e escopos MCP.
+5. Abra **Aprovações** e revise a solicitação de exemplo já incluída nos dados fictícios.
+6. Aprove ou rejeite e confirme o resultado no histórico e no projeto.
+7. Use **Auditoria** e **Traces** para acompanhar a trajetória completa da operação.
 
 ## Conectar um cliente MCP
 
-### stdio
-
-O cliente deve iniciar o script no diretório do servidor. Exemplo genérico:
+### Transporte stdio
 
 ```json
 {
   "mcpServers": {
     "project-bridge": {
       "command": "pnpm",
-      "args": ["--dir", "CAMINHO/ABSOLUTO/project-bridge/apps/server", "mcp:stdio"],
-      "env": {
-        "PROJECT_BRIDGE_CLIENT_NAME": "meu-cliente-local",
-        "PROJECT_BRIDGE_SCOPES": "projects:read,approvals:read,tasks:propose,tasks:update:propose,blockers:resolve:propose"
-      }
+      "args": ["--filter", "@project-bridge/server", "mcp:stdio"],
+      "cwd": "CAMINHO_ABSOLUTO_DO_REPOSITORIO"
     }
   }
 }
 ```
 
-### Streamable HTTP
+### Transporte HTTP
 
-Endpoint:
+Configure `PROJECT_BRIDGE_HTTP_CREDENTIALS` no processo do servidor, conforme o modelo de [`.env.example`](.env.example), e envie o token correspondente:
 
-```text
-http://127.0.0.1:8010/mcp
+```http
+Authorization: Bearer pbmcp_...
 ```
 
-O endpoint falha de forma segura quando nenhuma credencial foi configurada. Defina no ambiente do servidor um JSON com cliente, token e escopos autorizados:
+O endpoint público `/mcp` exige Bearer token. Tokens ausentes ou inválidos retornam `401`; chamadas a tools sem o escopo necessário retornam erro estruturado de autorização.
+
+Há um exemplo em [`.codex/config.toml`](.codex/config.toml) e um roteiro detalhado em [`docs/VALIDACAO_CODEX.md`](docs/VALIDACAO_CODEX.md).
+
+## Scripts e qualidade
 
 ```powershell
-$env:PROJECT_BRIDGE_HTTP_CREDENTIALS='[{"client_name":"codex-local","token":"SEU-TOKEN-ALEATORIO-DE-32-CARACTERES","scopes":["projects:read","approvals:read","tasks:propose","tasks:update:propose","blockers:resolve:propose"]}]'
+pnpm dev                                           # inicia API, MCP HTTP e frontend
+pnpm --filter @project-bridge/server mcp:stdio     # inicia o servidor MCP por stdio
+pnpm test                                          # executa os testes
+pnpm typecheck                                     # valida os tipos
+pnpm build                                         # gera os artefatos de produção
+pnpm audit:deps                                    # audita dependências
 ```
 
-O cliente envia somente `Authorization: Bearer <token>`. Nome e escopos são recuperados da credencial correspondente no servidor; cabeçalhos enviados pelo cliente não ampliam permissões. Para o arquivo `.codex/config.toml`, disponibilize o mesmo token na variável `PROJECT_BRIDGE_HTTP_TOKEN`. A [documentação oficial de MCP no Codex](https://developers.openai.com/codex/mcp/) confirma o suporte a `bearer_token_env_var` para servidores Streamable HTTP.
+A suíte cobre 18 cenários, incluindo:
 
-### Validação com Codex
+- autenticação e sessões;
+- RBAC da aplicação web e escopos das tools MCP;
+- escopos MCP;
+- schemas e contratos das tools;
+- aprovação e rejeição;
+- idempotência;
+- conflito de versão;
+- outbox, nova tentativa após falha e notificações;
+- propagação de contexto OpenTelemetry;
+- exportação OTLP.
 
-O repositório contém uma configuração por projeto em [`.codex/config.toml`](.codex/config.toml). Após iniciar o servidor, abra o diretório como projeto confiável no Codex e reinicie o cliente para carregar a integração.
+O workflow de CI executa testes, verificação de tipos, build e auditoria de dependências.
 
-A conexão também foi validada de forma independente com `codex-cli 0.150.0-alpha.8`: o cliente descobriu o servidor por Streamable HTTP, chamou `list_projects` e `get_project_context`, consumiu `structuredContent` e produziu um resumo sem acessar o banco ou usar o shell. A execução e a evidência de auditoria estão documentadas em [`docs/VALIDACAO_CODEX.md`](docs/VALIDACAO_CODEX.md).
+## Estado atual e limitações
 
-A configuração segue a [documentação oficial de MCP no Codex](https://developers.openai.com/codex/mcp/), incluindo allowlist das Tools e aprovação do cliente para operações de escrita.
+Este repositório é um protótipo de portfólio executável, não um SaaS pronto para produção.
 
-## Scripts
+- os dados são fictícios e voltados à demonstração;
+- a execução é local e de instância única;
+- a persistência usa SQLite;
+- as contas são pré-configuradas, sem cadastro público;
+- não há HTTPS, provedor de identidade externo ou recuperação de senha;
+- não há integração real com Jira, Linear, Trello ou outros gestores;
+- não há modelo generativo incorporado nem chave de IA obrigatória;
+- tarefas, riscos, decisões e bloqueios não têm páginas individuais;
+- não há comentários, anexos, busca avançada, filtros complexos ou colaboração em tempo real;
+- a exportação OTLP fica desabilitada até que um endpoint seja configurado.
 
-```bash
-pnpm dev        # API, MCP e interface
-pnpm test       # testes de domínio, API e contratos MCP
-pnpm typecheck  # TypeScript em todos os pacotes
-pnpm build      # builds de produção
-pnpm audit:deps # auditoria das dependências de produção e desenvolvimento
-```
-
-O Vite recarrega mudanças do frontend automaticamente. Após alterar o backend, reinicie `pnpm dev`; o script evita watchers recursivos que podem se comportar de forma instável no Windows.
-
-## Segurança demonstrada
-
-- bind somente em `127.0.0.1`;
-- proteção de Host e Origin fornecida pelo adapter Express oficial;
-- Bearer token obrigatório no MCP HTTP;
-- comparação de tokens por SHA-256 em tempo constante;
-- credenciais fora do repositório e falha segura quando não configuradas;
-- identidade e escopos definidos no servidor, não em cabeçalhos controlados pelo cliente;
-- senhas derivadas com `scrypt`, salt individual e comparação em tempo constante;
-- sessões aleatórias armazenadas somente por hash, com expiração de oito horas e logout revogável;
-- cookie de sessão `HttpOnly`, `SameSite=Strict` e `Secure` em produção;
-- autorização RBAC conferida pelo backend em cada mutação e acesso à auditoria;
-- controle de versão otimista para bloquear lost updates;
-- outbox transacional para não perder a invalidação de contexto após uma alteração confirmada;
-- escopos separados por família de mutação;
-- schemas estritos com Zod;
-- mutação sujeita a aprovação humana;
-- idempotência na fronteira da operação;
-- auditoria de leituras, propostas e decisões;
-- spans OpenTelemetry sem captura de cookies, tokens, senhas ou corpo das requisições;
-- ausência de chaves ou modelo generativo no fluxo.
-- auditoria de dependências de produção executada pela CI.
-
-## Testes atuais
-
-1. seed e indicadores do Projeto Atlas;
-2. tarefa criada somente após aprovação;
-3. repetição da decisão sem duplicar tarefa;
-4. descoberta de Resources, Tools e Prompt;
-5. saída estruturada e chave idempotente;
-6. bloqueio de Tool sem escopo;
-7. conexão e chamada reais por Streamable HTTP;
-8. publicação idempotente e entrega real de atualização por assinatura MCP;
-9. atualização de tarefa e resolução de impedimento somente após aprovação.
-10. criação e edição de projetos com validação e auditoria da interface humana;
-11. invalidação dos Resources de catálogo e detalhe após alterações de projeto.
-12. rejeição de requests sem token ou com token inválido, inclusive com escopos forjados.
-13. sessão obrigatória, cookie protegido e revogação por logout;
-14. leitor autorizado a consultar, mas impedido de editar e auditar;
-15. revisor autorizado a decidir aprovações sem editar projetos, com identidade auditada.
-16. conflito de versão rejeitado sem sobrescrever a edição mais recente;
-17. evento durável mantido na outbox durante falha e republicado na tentativa seguinte.
-18. span OpenTelemetry persistido, `traceparent` válido e diagnóstico local acessível.
-
-Os itens acima são cobertos por dezoito casos automatizados; alguns casos validam mais de um contrato dentro do mesmo fluxo.
-
-## Limitações do protótipo
-
-Estas limitações delimitam o primeiro corte e orientam as próximas evoluções. Elas são mantidas aqui para tornar decisões e trade-offs visíveis.
-
-- [x] autenticação e autorização HTTP reais no lugar dos cabeçalhos demonstrativos;
-- [x] mais operações mutáveis protegidas pelo mesmo fluxo de aprovação;
-- [x] criação e edição de projetos pela interface;
-- [x] notificações MCP quando Resources forem alterados;
-- [x] validação documentada com cliente MCP externo (Codex CLI);
-- [x] persistência preparada para concorrência multiusuário e futura distribuição, com os limites do SQLite documentados;
-- [x] identidade de usuários e separação de suas permissões.
-- [x] observabilidade com OpenTelemetry, traces locais e exportação OTLP opcional.
-
-Os dados permanecem intencionalmente fictícios para que a demonstração possa ser executada e publicada sem expor informações reais.
+O objetivo desta versão é tornar verificável a camada que costuma faltar em demos de agentes: contratos claros, contexto mínimo, autorização, aprovação humana, consistência, auditoria, observabilidade e testes.
 
 ## English summary
 
-Project Bridge is a local project operations hub backed by a real MCP server. It exposes typed Resources, Tools and a Prompt while enforcing least-privilege scopes, idempotency, human approval for mutations and a complete audit trail. The repository includes optimistic concurrency, a transactional outbox, OpenTelemetry traces with optional OTLP export, a Portuguese user interface, Streamable HTTP and stdio transports, seeded fictional data and deterministic contract tests that run without an LLM or API key.
+**Project Bridge is a governed integration layer between AI agents and a project-domain application.** It is not a full project manager, an API management product, or a chatbot.
 
-See the sections above for architecture, setup instructions, protocol capabilities, security decisions, tests and known limitations.
+Through MCP, an authenticated agent can read scoped project context and submit typed proposals for task creation, task updates, or blocker resolution. Every proposed mutation is held for human review. Approval triggers server-side authorization, optimistic concurrency checks, an idempotent domain change, transactional outbox publication, audit records, and trace data; rejection leaves the project unchanged.
+
+The repository demonstrates MCP resources, tools, prompts and notifications, Streamable HTTP and stdio transports, TypeScript and Zod contracts, Bearer scopes, project-level authorization, human-in-the-loop workflows, SQLite migrations, optimistic concurrency, durable outbox processing, OpenTelemetry instrumentation, contract tests, and CI.
 
 ## Referências oficiais
 
 - [Model Context Protocol](https://modelcontextprotocol.io/)
-- [SDK TypeScript oficial](https://github.com/modelcontextprotocol/typescript-sdk)
-- [Guia oficial de servidores MCP](https://github.com/modelcontextprotocol/typescript-sdk/blob/main/docs/server.md)
-- [OpenTelemetry JavaScript](https://opentelemetry.io/docs/languages/js/)
-- [Exporters OpenTelemetry](https://opentelemetry.io/docs/languages/js/exporters/)
+- [MCP TypeScript SDK](https://github.com/modelcontextprotocol/typescript-sdk)
+- [OpenTelemetry](https://opentelemetry.io/docs/)
+- [Codex MCP](https://developers.openai.com/codex/mcp/)
+
+## Licença
+
+Distribuído sob a licença [MIT](LICENSE).

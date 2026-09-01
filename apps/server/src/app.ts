@@ -1,6 +1,7 @@
 import { createMcpExpressApp } from "@modelcontextprotocol/express";
 import { toNodeHandler } from "@modelcontextprotocol/node";
 import { createMcpHandler } from "@modelcontextprotocol/server";
+import type { Context } from "@opentelemetry/api";
 import type { Request, Response, NextFunction } from "express";
 import * as z from "zod/v4";
 import { createDatabase, type DatabaseConnection } from "./database.js";
@@ -8,6 +9,7 @@ import { createMcpFactory } from "./mcp.js";
 import { DomainError, ProjectRepository } from "./repository.js";
 import { AuthenticationError, HttpAuthenticator } from "./auth.js";
 import { sessionToken, WebAuth, type Permission, type WebUser } from "./web-auth.js";
+import { Telemetry } from "./telemetry.js";
 
 const DecisionSchema = z.object({
   decision: z.enum(["approved", "rejected"]),
@@ -38,6 +40,7 @@ export function createApp(
   const db = database ?? createDatabase();
   const repository = new ProjectRepository(db);
   const webAuth = new WebAuth(db);
+  const telemetry = new Telemetry(db);
   const app = createMcpExpressApp({ host: "127.0.0.1" });
   const mcpHandler = createMcpHandler(createMcpFactory(repository, authenticator), {
     onerror: (error) => console.error("[MCP]", error.message),
@@ -45,10 +48,20 @@ export function createApp(
   const nodeMcpHandler = toNodeHandler(mcpHandler, {
     onerror: (error) => console.error("[MCP adapter]", error.message),
   });
-  const flushOutbox = () => repository.drainOutbox((uri) => mcpHandler.notify.resourceUpdated(uri));
+  const flushOutbox = (parent?: Context) => {
+    const pending = repository.pendingOutboxCount();
+    if (pending === 0) return 0;
+    return telemetry.withSpan(
+      "outbox.publish",
+      { "outbox.pending": pending },
+      () => repository.drainOutbox((uri) => mcpHandler.notify.resourceUpdated(uri)),
+      parent,
+    );
+  };
   const outboxTimer = process.env.NODE_ENV === "test" ? undefined : setInterval(flushOutbox, 1000);
   outboxTimer?.unref();
   flushOutbox();
+  app.use(telemetry.middleware());
 
   app.get("/api/health", (_request, response) => {
     response.json({ status: "ok", service: "project-bridge", mcp_sdk: "2.0.0" });
@@ -91,8 +104,10 @@ export function createApp(
   app.get("/api/projects", (_request, response) => response.json(repository.listProjects()));
   app.post("/api/projects", requirePermission("projects:write"), (request, response, next) => {
     try {
-      const project = repository.createProject(ProjectFieldsSchema.parse(request.body), (response.locals.user as WebUser).email);
-      flushOutbox();
+      const parent = response.locals.telemetryContext as Context;
+      const project = telemetry.withSpan("project.create", { "project.owner": request.body?.owner ?? "unknown" }, () =>
+        repository.createProject(ProjectFieldsSchema.parse(request.body), (response.locals.user as WebUser).email), parent);
+      flushOutbox(parent);
       response.status(201).json(project);
     } catch (error) {
       next(error);
@@ -107,8 +122,10 @@ export function createApp(
     try {
       const projectId = String(request.params.projectId);
       const { expected_version, ...changes } = ProjectUpdateSchema.parse(request.body);
-      const project = repository.updateProject(projectId, changes, expected_version, (response.locals.user as WebUser).email);
-      flushOutbox();
+      const parent = response.locals.telemetryContext as Context;
+      const project = telemetry.withSpan("project.update", { "project.id": projectId, "project.expected_version": expected_version }, () =>
+        repository.updateProject(projectId, changes, expected_version, (response.locals.user as WebUser).email), parent);
+      flushOutbox(parent);
       response.json(project);
     } catch (error) {
       next(error);
@@ -120,9 +137,11 @@ export function createApp(
       const input = DecisionSchema.parse(request.body);
       const approvalId = String(request.params.approvalId);
       const current = repository.getApproval(approvalId);
-      const approval = repository.decideApproval(approvalId, input.decision, input.note, (response.locals.user as WebUser).email);
+      const parent = response.locals.telemetryContext as Context;
+      const approval = telemetry.withSpan("approval.decide", { "approval.id": approvalId, "approval.decision": input.decision }, () =>
+        repository.decideApproval(approvalId, input.decision, input.note, (response.locals.user as WebUser).email), parent);
 
-      if (current?.status === "pending" && input.decision === "approved") flushOutbox();
+      if (current?.status === "pending" && input.decision === "approved") flushOutbox(parent);
 
       response.json(approval);
     } catch (error) {
@@ -130,9 +149,10 @@ export function createApp(
     }
   });
   app.get("/api/audit", requirePermission("audit:read"), (_request, response) => response.json(repository.listAudit()));
+  app.get("/api/observability", requirePermission("audit:read"), (_request, response) => response.json(telemetry.summary()));
   app.get("/api/mcp/info", requirePermission("audit:read"), (_request, response) => response.json({
     name: "project-bridge",
-    version: "0.8.0",
+    version: "0.9.0",
     transport: "Streamable HTTP",
     http_authentication: "Bearer token",
     authenticated_clients: authenticator.configuredClients,
@@ -143,6 +163,7 @@ export function createApp(
     mutation_scopes: ["tasks:propose", "tasks:update:propose", "blockers:resolve:propose"],
     resources: ["project-bridge://projects", "project-bridge://projects/{projectId}"],
     notifications: ["notifications/resources/updated"],
+    observability: { sdk: "OpenTelemetry JS", local_exporter: "SQLite", otlp_enabled: telemetry.otlpEnabled },
     tools: [
       "list_projects",
       "get_project_context",
@@ -182,5 +203,9 @@ export function createApp(
     return response.status(500).json({ code: "INTERNAL_ERROR", message: "Não foi possível concluir a operação." });
   });
 
-  return { app, db, repository, mcpHandler, close: async () => { if (outboxTimer) clearInterval(outboxTimer); await mcpHandler.close(); } };
+  return { app, db, repository, mcpHandler, telemetry, close: async () => {
+    if (outboxTimer) clearInterval(outboxTimer);
+    await mcpHandler.close();
+    await telemetry.close();
+  } };
 }

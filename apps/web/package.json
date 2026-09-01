@@ -1,6 +1,6 @@
 {
   "name": "@project-bridge/web",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -9,11 +9,11 @@
     "typecheck": "tsc -b --pretty false"
   },
   "dependencies": {
-    "@vitejs/plugin-react": "5.0.2",
-    "vite": "7.1.4",
-    "typescript": "5.9.2",
+    "@vitejs/plugin-react": "6.1.1",
     "react": "19.1.1",
-    "react-dom": "19.1.1"
+    "react-dom": "19.1.1",
+    "typescript": "5.9.2",
+    "vite": "8.2.2"
   },
   "devDependencies": {
     "@types/react": "19.1.12",

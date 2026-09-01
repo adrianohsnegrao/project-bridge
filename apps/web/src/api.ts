@@ -1,4 +1,4 @@
-import type { Approval, AuditEvent, McpInfo, Overview, Project, ProjectInput, ProjectSummary, WebUser } from "./types";
+import type { Approval, AuditEvent, McpInfo, Observability, Overview, Project, ProjectInput, ProjectSummary, WebUser } from "./types";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`/api${path}`, {
@@ -31,6 +31,7 @@ export const api = {
   approvals: () => request<Approval[]>("/approvals"),
   audit: () => request<AuditEvent[]>("/audit"),
   mcpInfo: () => request<McpInfo>("/mcp/info"),
+  observability: () => request<Observability>("/observability"),
   decideApproval: (id: string, decision: "approved" | "rejected", note: string) =>
     request<Approval>(`/approvals/${id}/decision`, {
       method: "POST",

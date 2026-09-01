@@ -170,6 +170,29 @@ function migrate(db: DatabaseConnection): void {
     });
     applyV2();
   }
+  if (!applied.has(3)) {
+    const applyV3 = db.transaction(() => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS telemetry_spans (
+          span_id TEXT PRIMARY KEY,
+          trace_id TEXT NOT NULL,
+          parent_span_id TEXT,
+          name TEXT NOT NULL,
+          kind INTEGER NOT NULL,
+          status TEXT NOT NULL,
+          status_message TEXT,
+          started_at TEXT NOT NULL,
+          duration_ms REAL NOT NULL,
+          attributes_json TEXT NOT NULL,
+          instrumentation_scope TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_telemetry_trace ON telemetry_spans(trace_id, started_at);
+        CREATE INDEX IF NOT EXISTS idx_telemetry_started ON telemetry_spans(started_at DESC);
+      `);
+      db.prepare("INSERT INTO schema_migrations (version, name, applied_at) VALUES (3, 'opentelemetry-spans', ?)").run(new Date().toISOString());
+    });
+    applyV3();
+  }
 }
 
 function seed(db: DatabaseConnection): void {

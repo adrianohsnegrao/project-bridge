@@ -1,5 +1,7 @@
 packages:
   - apps/*
+overrides:
+  esbuild: 0.28.1
 allowBuilds:
   better-sqlite3: true
   esbuild: true

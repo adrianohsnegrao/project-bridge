@@ -1,15 +1,16 @@
 {
   "name": "project-bridge",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "private": true,
   "packageManager": "pnpm@11.19.0",
   "scripts": {
     "dev": "concurrently -n server,web -c cyan,magenta \"pnpm --filter @project-bridge/server dev\" \"pnpm --filter @project-bridge/web dev\"",
     "build": "pnpm -r build",
     "test": "pnpm --filter @project-bridge/server test",
-    "typecheck": "pnpm -r typecheck"
+    "typecheck": "pnpm -r typecheck",
+    "audit:deps": "pnpm audit"
   },
   "devDependencies": {
-    "concurrently": "9.2.1"
+    "concurrently": "10.0.5"
   }
 }

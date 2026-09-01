@@ -28,6 +28,8 @@ O foco técnico está no protocolo e no desenho seguro da integração. Nenhum m
 - banco SQLite local com seed idempotente, WAL, timeout de concorrência e migrações versionadas;
 - concorrência otimista por versão, impedindo que uma edição obsoleta sobrescreva outra;
 - outbox transacional com reprocessamento de notificações MCP após indisponibilidade;
+- tracing com OpenTelemetry JS para requisições HTTP e operações internas;
+- exportação local de spans para inspeção sem infraestrutura adicional e OTLP/HTTP opcional;
 - servidor MCP construído com o SDK oficial TypeScript 2.0;
 - Streamable HTTP em `/mcp` e execução local por stdio;
 - autenticação Bearer obrigatória no transporte HTTP, com tokens fora do repositório;
@@ -43,7 +45,7 @@ O foco técnico está no protocolo e no desenho seguro da integração. Nenhum m
 - trilha de auditoria com cliente, ação, estado e duração;
 - auditoria separando ações humanas de chamadas feitas por integrações;
 - notificação de mudança para clientes MCP inscritos quando projetos ou aprovações alteram Resources;
-- dezessete testes automatizados, incluindo sessões web, RBAC, concorrência, outbox, autenticação MCP, mutações, CRUD humano, transporte HTTP e assinatura real.
+- dezoito testes automatizados, incluindo sessões web, RBAC, concorrência, outbox, OpenTelemetry, autenticação MCP, mutações, CRUD humano, transporte HTTP e assinatura real.
 
 ## Corte vertical demonstrado
 
@@ -95,6 +97,30 @@ O protótipo continua usando SQLite porque isso mantém o quickstart simples e r
 - a entrega da outbox é pelo menos uma vez; a notificação é idempotente porque orienta o cliente a reler o Resource atual.
 
 Isso prepara a fronteira do domínio para concorrência e para uma futura troca do adapter por PostgreSQL, mas não apresenta o SQLite como banco distribuído. Em uma implantação horizontal, o worker da outbox e o mecanismo de claim de eventos também devem ser coordenados pelo banco ou por uma fila.
+
+### Observabilidade com OpenTelemetry
+
+O serviço utiliza o SDK oficial OpenTelemetry para produzir spans reais, não apenas linhas de log com aparência de trace. A instrumentação cobre:
+
+- cada requisição HTTP, com método, caminho, status e duração;
+- operações internas de criação e edição de projeto;
+- decisão de aprovação;
+- publicação da outbox;
+- relação pai-filho entre a requisição e a operação de domínio;
+- cabeçalho W3C `traceparent` nas respostas para correlação.
+
+Um exporter local persiste até 500 spans na tabela `telemetry_spans`, permitindo que a interface mostre traces, IDs, atributos, erros e duração sem exigir conta ou serviço externo. O endpoint protegido `GET /api/observability` fornece o mesmo diagnóstico em JSON.
+
+Para enviar os traces também a um Collector ou backend compatível com OTLP/HTTP, defina uma das variáveis antes de iniciar o servidor:
+
+```powershell
+$env:OTEL_EXPORTER_OTLP_ENDPOINT='http://127.0.0.1:4318'
+# ou o endpoint completo de traces:
+$env:OTEL_EXPORTER_OTLP_TRACES_ENDPOINT='http://127.0.0.1:4318/v1/traces'
+pnpm dev
+```
+
+O exporter local continua ativo quando OTLP é habilitado. A instrumentação evita corpo de requisição, cookies, senhas e tokens; somente atributos operacionais explicitamente permitidos são gravados. Em produção, retenção, amostragem e controles do backend devem ser definidos conforme volume e política de dados. A documentação oficial recomenda o Collector para exportação em produção: [OpenTelemetry JavaScript — Exporters](https://opentelemetry.io/docs/languages/js/exporters/).
 
 ## Capacidades MCP
 
@@ -211,7 +237,10 @@ pnpm dev        # API, MCP e interface
 pnpm test       # testes de domínio, API e contratos MCP
 pnpm typecheck  # TypeScript em todos os pacotes
 pnpm build      # builds de produção
+pnpm audit:deps # auditoria das dependências de produção e desenvolvimento
 ```
+
+O Vite recarrega mudanças do frontend automaticamente. Após alterar o backend, reinicie `pnpm dev`; o script evita watchers recursivos que podem se comportar de forma instável no Windows.
 
 ## Segurança demonstrada
 
@@ -232,7 +261,9 @@ pnpm build      # builds de produção
 - mutação sujeita a aprovação humana;
 - idempotência na fronteira da operação;
 - auditoria de leituras, propostas e decisões;
+- spans OpenTelemetry sem captura de cookies, tokens, senhas ou corpo das requisições;
 - ausência de chaves ou modelo generativo no fluxo.
+- auditoria de dependências de produção executada pela CI.
 
 ## Testes atuais
 
@@ -253,8 +284,9 @@ pnpm build      # builds de produção
 15. revisor autorizado a decidir aprovações sem editar projetos, com identidade auditada.
 16. conflito de versão rejeitado sem sobrescrever a edição mais recente;
 17. evento durável mantido na outbox durante falha e republicado na tentativa seguinte.
+18. span OpenTelemetry persistido, `traceparent` válido e diagnóstico local acessível.
 
-Os itens acima são cobertos por dezessete casos automatizados; alguns casos validam mais de um contrato dentro do mesmo fluxo.
+Os itens acima são cobertos por dezoito casos automatizados; alguns casos validam mais de um contrato dentro do mesmo fluxo.
 
 ## Limitações do protótipo
 
@@ -267,12 +299,13 @@ Estas limitações delimitam o primeiro corte e orientam as próximas evoluçõe
 - [x] validação documentada com cliente MCP externo (Codex CLI);
 - [x] persistência preparada para concorrência multiusuário e futura distribuição, com os limites do SQLite documentados;
 - [x] identidade de usuários e separação de suas permissões.
+- [x] observabilidade com OpenTelemetry, traces locais e exportação OTLP opcional.
 
 Os dados permanecem intencionalmente fictícios para que a demonstração possa ser executada e publicada sem expor informações reais.
 
 ## English summary
 
-Project Bridge is a local project operations hub backed by a real MCP server. It exposes typed Resources, Tools and a Prompt while enforcing least-privilege scopes, idempotency, human approval for mutations and a complete audit trail. The repository includes a Portuguese user interface, Streamable HTTP and stdio transports, seeded fictional data and deterministic contract tests that run without an LLM or API key.
+Project Bridge is a local project operations hub backed by a real MCP server. It exposes typed Resources, Tools and a Prompt while enforcing least-privilege scopes, idempotency, human approval for mutations and a complete audit trail. The repository includes optimistic concurrency, a transactional outbox, OpenTelemetry traces with optional OTLP export, a Portuguese user interface, Streamable HTTP and stdio transports, seeded fictional data and deterministic contract tests that run without an LLM or API key.
 
 See the sections above for architecture, setup instructions, protocol capabilities, security decisions, tests and known limitations.
 
@@ -281,3 +314,5 @@ See the sections above for architecture, setup instructions, protocol capabiliti
 - [Model Context Protocol](https://modelcontextprotocol.io/)
 - [SDK TypeScript oficial](https://github.com/modelcontextprotocol/typescript-sdk)
 - [Guia oficial de servidores MCP](https://github.com/modelcontextprotocol/typescript-sdk/blob/main/docs/server.md)
+- [OpenTelemetry JavaScript](https://opentelemetry.io/docs/languages/js/)
+- [Exporters OpenTelemetry](https://opentelemetry.io/docs/languages/js/exporters/)

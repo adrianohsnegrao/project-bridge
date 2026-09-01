@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "./api";
-import type { Approval, AuditEvent, McpInfo, Overview, Page, Project, ProjectInput, ProjectSummary, WebUser } from "./types";
+import type { Approval, AuditEvent, McpInfo, Observability, Overview, Page, Project, ProjectInput, ProjectSummary, WebUser } from "./types";
 
 const statusLabels = {
   active: "Em andamento",
@@ -30,6 +30,7 @@ export default function App() {
   const [approvals, setApprovals] = useState<Approval[]>([]);
   const [audit, setAudit] = useState<AuditEvent[]>([]);
   const [mcpInfo, setMcpInfo] = useState<McpInfo | null>(null);
+  const [observability, setObservability] = useState<Observability | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [tutorialOpen, setTutorialOpen] = useState(() => localStorage.getItem("project-bridge-tutorial") !== "done");
@@ -38,14 +39,15 @@ export default function App() {
     setError("");
     try {
       const [nextOverview, nextProjects, nextApprovals] = await Promise.all([api.overview(), api.projects(), api.approvals()]);
-      const [nextAudit, nextMcpInfo] = user?.permissions.includes("audit:read")
-        ? await Promise.all([api.audit(), api.mcpInfo()])
-        : [[], null];
+      const [nextAudit, nextMcpInfo, nextObservability] = user?.permissions.includes("audit:read")
+        ? await Promise.all([api.audit(), api.mcpInfo(), api.observability()])
+        : [[], null, null];
       setOverview(nextOverview);
       setProjects(nextProjects);
       setApprovals(nextApprovals);
       setAudit(nextAudit);
       setMcpInfo(nextMcpInfo);
+      setObservability(nextObservability);
       const selectedId = preferredProjectId ?? project?.id ?? nextProjects[0]?.id;
       if (selectedId && nextProjects.some((item) => item.id === selectedId)) {
         setProject(await api.project(selectedId));
@@ -105,7 +107,7 @@ export default function App() {
               canWrite={canWriteProjects}
             />}
             {page === "approvals" && <ApprovalsPage approvals={approvals} canDecide={canDecide} onDecision={async (id, decision, note) => { await api.decideApproval(id, decision, note); await refresh(); }} />}
-            {page === "activity" && mcpInfo && <ActivityPage info={mcpInfo} audit={audit} />}
+            {page === "activity" && mcpInfo && observability && <ActivityPage info={mcpInfo} observability={observability} audit={audit} />}
           </>
         )}
       </main>
@@ -313,7 +315,7 @@ function ApprovalsPage({ approvals, onDecision, canDecide }: { approvals: Approv
   </>;
 }
 
-function ActivityPage({ info, audit }: { info: McpInfo; audit: AuditEvent[] }) {
+function ActivityPage({ info, observability, audit }: { info: McpInfo; observability: Observability; audit: AuditEvent[] }) {
   return <>
     <PageHeading eyebrow="INTEGRAÇÕES" title="Uma ponte controlada para clientes MCP." description="Consulte capacidades, contratos e cada operação realizada sem expor a experiência técnica ao usuário comum." />
     <section className="connection-card panel"><div className="connection-status"><span className="status-dot" /><div><strong>MCP disponível</strong><small>{info.transport} · SDK {info.version}</small></div></div><code>{info.endpoint}</code></section>
@@ -323,6 +325,17 @@ function ActivityPage({ info, audit }: { info: McpInfo; audit: AuditEvent[] }) {
     </div>
     <section className="panel scopes-panel"><div className="section-title"><div><span>PERMISSÕES</span><h2>Autenticação e escopos</h2></div><b>{info.authenticated_clients} cliente(s)</b></div><p>O transporte HTTP exige {info.http_authentication}. Os escopos pertencem à credencial configurada no servidor e não podem ser escolhidos pelo cliente.</p><div className="scope-list">{info.default_scopes.map((scope) => <code key={scope}>{scope}</code>)}{info.mutation_scopes.map((scope) => <code className="mutation-scope" key={scope}>{scope}</code>)}</div></section>
     <section className="panel scopes-panel"><div className="section-title"><div><span>PERSISTÊNCIA</span><h2>Concorrência e entrega confiável</h2></div><b>{info.persistence.engine}</b></div><p>{info.persistence.journal_mode} · controle otimista de versão · outbox transacional para notificações duráveis.</p></section>
+    <section className="panel telemetry-panel">
+      <div className="section-title"><div><span>OPENTELEMETRY</span><h2>Traces da aplicação</h2></div><b>{observability.total_spans} spans</b></div>
+      <p>Spans reais do serviço são mantidos localmente em {observability.local_exporter}. Exportação OTLP {observability.otlp_enabled ? "ativa" : "opcional e desativada"}.</p>
+      <div className="telemetry-metrics"><div><small>Duração média</small><strong>{observability.average_duration_ms.toFixed(1)} ms</strong></div><div><small>Erros</small><strong>{observability.error_spans}</strong></div><div><small>Retenção local</small><strong>{observability.retention}</strong></div></div>
+      <div className="trace-list" aria-label="Spans recentes">{observability.recent_spans.length === 0 ? <EmptyState text="Os primeiros traces aparecerão após uma requisição." /> : observability.recent_spans.map((span) => <article key={span.span_id}>
+        <span className={`trace-status ${span.status}`} aria-label={span.status} />
+        <div><strong>{span.name}</strong><small>trace {span.trace_id.slice(0, 12)}… · {new Date(span.started_at).toLocaleString("pt-BR")}</small></div>
+        <code>{span.duration_ms.toFixed(1)} ms</code>
+        <details><summary>Ver atributos</summary><pre>{JSON.stringify(span.attributes, null, 2)}</pre></details>
+      </article>)}</div>
+    </section>
     <section className="panel audit-panel"><div className="section-title"><div><span>AUDITORIA</span><h2>Trajetória das operações</h2></div><b>{audit.length} registros</b></div><AuditList events={audit} detailed /></section>
   </>;
 }

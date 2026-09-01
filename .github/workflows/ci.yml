@@ -32,6 +32,9 @@ jobs:
       - name: Typecheck
         run: pnpm typecheck
 
+      - name: Dependency audit
+        run: pnpm audit:deps
+
       - name: Test
         run: pnpm test
 

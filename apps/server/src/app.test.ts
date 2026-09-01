@@ -43,6 +43,26 @@ describe("Project Bridge API", () => {
     await runtime.close();
   });
 
+  it("registra spans OpenTelemetry e expõe trace context e diagnóstico local", async () => {
+    const runtime = createApp(testDatabase());
+    const overview = await request(runtime.app).get("/api/overview").expect(200);
+    expect(overview.headers.traceparent).toMatch(/^00-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$/);
+
+    const observability = await request(runtime.app).get("/api/observability").expect(200);
+    expect(observability.body).toMatchObject({
+      service_name: "project-bridge",
+      sdk: "OpenTelemetry JS",
+      local_exporter: "SQLite",
+      otlp_enabled: false,
+      error_spans: 0,
+      retention: 500,
+    });
+    expect(observability.body.recent_spans).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: "GET /api/overview", status: "ok" }),
+    ]));
+    await runtime.close();
+  });
+
   it("só cria a tarefa depois da aprovação humana e não duplica a decisão", async () => {
     const runtime = createApp(testDatabase());
 

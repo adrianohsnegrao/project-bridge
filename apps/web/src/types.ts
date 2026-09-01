@@ -108,6 +108,7 @@ export interface McpInfo {
   http_authentication: string;
   authenticated_clients: number;
   persistence: { engine: string; journal_mode: string; optimistic_locking: boolean; transactional_outbox: boolean };
+  observability: { sdk: string; local_exporter: string; otlp_enabled: boolean };
   endpoint: string;
   default_scopes: string[];
   mutation_scope: string;
@@ -116,4 +117,28 @@ export interface McpInfo {
   resources: string[];
   tools: string[];
   prompts: string[];
+}
+
+export interface Observability {
+  service_name: string;
+  sdk: string;
+  local_exporter: string;
+  otlp_enabled: boolean;
+  total_spans: number;
+  error_spans: number;
+  average_duration_ms: number;
+  retention: number;
+  recent_spans: Array<{
+    span_id: string;
+    trace_id: string;
+    parent_span_id: string | null;
+    name: string;
+    kind: number;
+    status: "unset" | "ok" | "error";
+    status_message: string | null;
+    started_at: string;
+    duration_ms: number;
+    attributes: Record<string, string | number | boolean | Array<string | number | boolean>>;
+    instrumentation_scope: string;
+  }>;
 }

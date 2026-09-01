@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "./api";
-import type { Approval, AuditEvent, McpInfo, Overview, Page, Project, ProjectInput, ProjectSummary } from "./types";
+import type { Approval, AuditEvent, McpInfo, Overview, Page, Project, ProjectInput, ProjectSummary, WebUser } from "./types";
 
 const statusLabels = {
   active: "Em andamento",
@@ -22,6 +22,7 @@ function dateLabel(value: string | null): string {
 }
 
 export default function App() {
+  const [user, setUser] = useState<WebUser | null | undefined>(undefined);
   const [page, setPage] = useState<Page>("overview");
   const [overview, setOverview] = useState<Overview | null>(null);
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
@@ -36,9 +37,10 @@ export default function App() {
   const refresh = async (preferredProjectId?: string) => {
     setError("");
     try {
-      const [nextOverview, nextProjects, nextApprovals, nextAudit, nextMcpInfo] = await Promise.all([
-        api.overview(), api.projects(), api.approvals(), api.audit(), api.mcpInfo(),
-      ]);
+      const [nextOverview, nextProjects, nextApprovals] = await Promise.all([api.overview(), api.projects(), api.approvals()]);
+      const [nextAudit, nextMcpInfo] = user?.permissions.includes("audit:read")
+        ? await Promise.all([api.audit(), api.mcpInfo()])
+        : [[], null];
       setOverview(nextOverview);
       setProjects(nextProjects);
       setApprovals(nextApprovals);
@@ -57,19 +59,26 @@ export default function App() {
     }
   };
 
-  useEffect(() => { void refresh(); }, []);
+  useEffect(() => { void api.me().then(setUser).catch(() => setUser(null)); }, []);
+  useEffect(() => { if (user) void refresh(); }, [user]);
 
   const navigate = (nextPage: Page) => {
     setPage(nextPage);
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
+  if (user === undefined) return <Loading />;
+  if (!user) return <LoginPage onLogin={async (email, password) => setUser(await api.login(email, password))} />;
+  const canWriteProjects = user.permissions.includes("projects:write");
+  const canDecide = user.permissions.includes("approvals:decide");
+  const canAudit = user.permissions.includes("audit:read");
+
   return (
     <div className="app-shell">
       <a className="skip-link" href="#main-content">Ir para o conteúdo</a>
       <header className="topbar">
         <div className="brand"><span className="brand-mark" aria-hidden="true">PB</span><div><strong>Central de Projetos</strong><small>Project Bridge</small></div></div>
-        <button className="quiet-button" onClick={() => setTutorialOpen(true)}>Como funciona</button>
+        <div className="user-menu"><div><strong>{user.name}</strong><small>{user.role}</small></div><button className="quiet-button" onClick={() => setTutorialOpen(true)}>Como funciona</button><button className="quiet-button" onClick={() => void api.logout().finally(() => setUser(null))}>Sair</button></div>
       </header>
 
       <aside className="sidebar">
@@ -77,7 +86,7 @@ export default function App() {
           <NavButton active={page === "overview"} label="Visão geral" symbol="⌂" onClick={() => navigate("overview")} />
           <NavButton active={page === "projects"} label="Projetos" symbol="▤" onClick={() => navigate("projects")} />
           <NavButton active={page === "approvals"} label="Aprovações" symbol="✓" count={overview?.pending_approvals} onClick={() => navigate("approvals")} />
-          <NavButton active={page === "activity"} label="Integrações" symbol="↔" onClick={() => navigate("activity")} />
+          {canAudit && <NavButton active={page === "activity"} label="Integrações" symbol="↔" onClick={() => navigate("activity")} />}
         </nav>
         <div className="sidebar-note"><span className="status-dot" /> <strong>Servidor local</strong><small>MCP e API disponíveis</small></div>
       </aside>
@@ -93,8 +102,9 @@ export default function App() {
               onSelect={async (id) => setProject(await api.project(id))}
               onCreate={async (input) => { const created = await api.createProject(input); await refresh(created.id); }}
               onUpdate={async (id, input) => { await api.updateProject(id, input); await refresh(id); }}
+              canWrite={canWriteProjects}
             />}
-            {page === "approvals" && <ApprovalsPage approvals={approvals} onDecision={async (id, decision, note) => { await api.decideApproval(id, decision, note); await refresh(); }} />}
+            {page === "approvals" && <ApprovalsPage approvals={approvals} canDecide={canDecide} onDecision={async (id, decision, note) => { await api.decideApproval(id, decision, note); await refresh(); }} />}
             {page === "activity" && mcpInfo && <ActivityPage info={mcpInfo} audit={audit} />}
           </>
         )}
@@ -107,6 +117,24 @@ export default function App() {
 
 function NavButton({ active, label, symbol, count, onClick }: { active: boolean; label: string; symbol: string; count?: number; onClick: () => void }) {
   return <button className={`nav-button ${active ? "active" : ""}`} aria-current={active ? "page" : undefined} onClick={onClick}><span aria-hidden="true">{symbol}</span>{label}{count ? <b>{count}</b> : null}</button>;
+}
+
+function LoginPage({ onLogin }: { onLogin: (email: string, password: string) => Promise<void> }) {
+  const [email, setEmail] = useState("admin@projectbridge.local");
+  const [password, setPassword] = useState("admin12345");
+  const [error, setError] = useState("");
+  const [working, setWorking] = useState(false);
+  return <main className="login-shell"><section className="login-card">
+    <div className="brand login-brand"><span className="brand-mark">PB</span><div><strong>Central de Projetos</strong><small>Project Bridge</small></div></div>
+    <span className="tutorial-eyebrow">ACESSO SEGURO</span><h1>Entre para continuar</h1><p>As permissões da sua conta definem quais informações e ações estarão disponíveis.</p>
+    <form onSubmit={(event) => { event.preventDefault(); setWorking(true); setError(""); void onLogin(email, password).catch((reason: unknown) => setError(reason instanceof Error ? reason.message : "Não foi possível entrar.")).finally(() => setWorking(false)); }}>
+      <label>E-mail<input type="email" required autoComplete="username" value={email} onChange={(event) => setEmail(event.target.value)} /></label>
+      <label>Senha<input type="password" required minLength={8} autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} /></label>
+      {error && <div className="form-error" role="alert">{error}</div>}
+      <button className="primary-button" disabled={working}>{working ? "Entrando…" : "Entrar"}</button>
+    </form>
+    <details><summary>Contas fictícias para avaliação</summary><p><code>admin@projectbridge.local</code> / <code>admin12345</code></p><p><code>revisor@projectbridge.local</code> / <code>revisor12345</code></p><p><code>leitor@projectbridge.local</code> / <code>leitor12345</code></p></details>
+  </section></main>;
 }
 
 function PageHeading({ eyebrow, title, description }: { eyebrow: string; title: string; description: string }) {
@@ -134,12 +162,13 @@ function Metric({ label, value, note, tone }: { label: string; value: number; no
   return <article className={`metric-card ${tone}`}><span>{label}</span><strong>{value}</strong><small>{note}</small></article>;
 }
 
-function ProjectsPage({ projects, project, onSelect, onCreate, onUpdate }: {
+function ProjectsPage({ projects, project, onSelect, onCreate, onUpdate, canWrite }: {
   projects: ProjectSummary[];
   project: Project | null;
   onSelect: (id: string) => void;
   onCreate: (input: ProjectInput) => Promise<void>;
   onUpdate: (id: string, input: ProjectInput) => Promise<void>;
+  canWrite: boolean;
 }) {
   const [formMode, setFormMode] = useState<"create" | "edit" | null>(null);
   const counts = useMemo(() => project ? {
@@ -150,7 +179,7 @@ function ProjectsPage({ projects, project, onSelect, onCreate, onUpdate }: {
     <PageHeading eyebrow="PROJETOS" title="Contexto organizado para pessoas e integrações." description="As mesmas informações visíveis aqui podem ser consultadas de forma estruturada por clientes MCP autorizados." />
     <div className="project-toolbar">
       <label className="project-selector">Projeto selecionado<select value={project?.id ?? ""} onChange={(event) => onSelect(event.target.value)}>{projects.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
-      <div><button className="secondary-button" disabled={!project} onClick={() => setFormMode("edit")}>Editar projeto</button><button className="primary-button" onClick={() => setFormMode("create")}>Novo projeto</button></div>
+      {canWrite && <div><button className="secondary-button" disabled={!project} onClick={() => setFormMode("edit")}>Editar projeto</button><button className="primary-button" onClick={() => setFormMode("create")}>Novo projeto</button></div>}
     </div>
     {project && <>
       <section className="project-hero panel"><div><StatusPill status={project.status} /><h2>{project.name}</h2><p>{project.objective}</p></div><div className="progress-circle" style={{ "--progress": `${project.progress * 3.6}deg` } as React.CSSProperties}><span>{project.progress}%<small>concluído</small></span></div></section>
@@ -252,7 +281,7 @@ function proposalDescription(approval: Approval): string {
   return `Prioridade: ${values.priority ?? "não definida"} · Prazo: ${dateLabel(values.due_date ?? null)}`;
 }
 
-function ApprovalsPage({ approvals, onDecision }: { approvals: Approval[]; onDecision: (id: string, decision: "approved" | "rejected", note: string) => Promise<void> }) {
+function ApprovalsPage({ approvals, onDecision, canDecide }: { approvals: Approval[]; canDecide: boolean; onDecision: (id: string, decision: "approved" | "rejected", note: string) => Promise<void> }) {
   const [notes, setNotes] = useState<Record<string, string>>({});
   const [working, setWorking] = useState<string | null>(null);
   const pending = approvals.filter((approval) => approval.status === "pending");
@@ -276,8 +305,8 @@ function ApprovalsPage({ approvals, onDecision }: { approvals: Approval[]; onDec
         <div className="justification"><small>Alteração proposta</small><p>{proposalDescription(approval)}</p></div>
         <div className="justification"><small>Justificativa registrada</small><p>{approval.justification}</p></div>
         <details><summary>Ver contrato e chave idempotente</summary><dl><div><dt>Operação</dt><dd>{approval.operation}</dd></div><div><dt>Chave</dt><dd><code>{approval.idempotency_key}</code></dd></div><div><dt>Escopo exigido</dt><dd><code>{approvalScope(approval)}</code></dd></div></dl></details>
-        <label className="review-note">Observação da decisão<textarea placeholder="Registre por que esta solicitação deve ou não prosseguir." value={notes[approval.id] ?? ""} onChange={(event) => setNotes({ ...notes, [approval.id]: event.target.value })} /></label>
-        <div className="approval-actions"><button className="reject-button" disabled={working === approval.id || (notes[approval.id]?.trim().length ?? 0) < 3} onClick={() => void decide(approval, "rejected")}>Rejeitar solicitação</button><button className="approve-button" disabled={working === approval.id || (notes[approval.id]?.trim().length ?? 0) < 3} onClick={() => void decide(approval, "approved")}>{working === approval.id ? "Registrando…" : approvalAction(approval)}</button></div>
+        {canDecide ? <><label className="review-note">Observação da decisão<textarea placeholder="Registre por que esta solicitação deve ou não prosseguir." value={notes[approval.id] ?? ""} onChange={(event) => setNotes({ ...notes, [approval.id]: event.target.value })} /></label>
+        <div className="approval-actions"><button className="reject-button" disabled={working === approval.id || (notes[approval.id]?.trim().length ?? 0) < 3} onClick={() => void decide(approval, "rejected")}>Rejeitar solicitação</button><button className="approve-button" disabled={working === approval.id || (notes[approval.id]?.trim().length ?? 0) < 3} onClick={() => void decide(approval, "approved")}>{working === approval.id ? "Registrando…" : approvalAction(approval)}</button></div></> : <div className="permission-note">Seu perfil pode consultar esta solicitação, mas não pode aprová-la ou rejeitá-la.</div>}
       </article>)}
     </section>
     {decided.length > 0 && <section className="decided-section"><div className="section-title page-section-title"><div><span>HISTÓRICO</span><h2>Decisões anteriores</h2></div></div>{decided.map((approval) => <article className="decided-row" key={approval.id}><StatusPill status={approval.status} /><div><strong>{approval.arguments.title ?? approval.operation}</strong><small>{approval.requested_by} · {dateLabel(approval.decided_at)}</small></div><p>{approval.decision_note}</p></article>)}</section>}

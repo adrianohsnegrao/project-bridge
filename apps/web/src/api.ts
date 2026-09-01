@@ -1,4 +1,4 @@
-import type { Approval, AuditEvent, McpInfo, Overview, Project, ProjectInput, ProjectSummary } from "./types";
+import type { Approval, AuditEvent, McpInfo, Overview, Project, ProjectInput, ProjectSummary, WebUser } from "./types";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`/api${path}`, {
@@ -9,10 +9,14 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     const error = await response.json().catch(() => ({ message: "O serviço local não respondeu como esperado." }));
     throw new Error(error.message ?? "Não foi possível concluir a operação.");
   }
+  if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
 }
 
 export const api = {
+  me: () => request<WebUser>("/auth/me"),
+  login: (email: string, password: string) => request<WebUser>("/auth/login", { method: "POST", body: JSON.stringify({ email, password }) }),
+  logout: () => request<void>("/auth/logout", { method: "POST" }),
   overview: () => request<Overview>("/overview"),
   projects: () => request<ProjectSummary[]>("/projects"),
   project: (id: string) => request<Project>(`/projects/${id}`),

@@ -7,6 +7,7 @@ import { createDatabase, type DatabaseConnection } from "./database.js";
 import { createMcpFactory } from "./mcp.js";
 import { DomainError, ProjectRepository } from "./repository.js";
 import { AuthenticationError, HttpAuthenticator } from "./auth.js";
+import { sessionToken, WebAuth, type Permission, type WebUser } from "./web-auth.js";
 
 const DecisionSchema = z.object({
   decision: z.enum(["approved", "rejected"]),
@@ -27,10 +28,16 @@ const ProjectUpdateSchema = ProjectFieldsSchema.partial().refine(
   (input) => Object.keys(input).length > 0,
   { message: "Informe ao menos um campo para atualizar." },
 );
+const LoginSchema = z.object({ email: z.email(), password: z.string().min(8).max(200) });
 
-export function createApp(database?: DatabaseConnection, authenticator = new HttpAuthenticator()) {
+export function createApp(
+  database?: DatabaseConnection,
+  authenticator = new HttpAuthenticator(),
+  options: { requireWebAuth?: boolean } = {},
+) {
   const db = database ?? createDatabase();
   const repository = new ProjectRepository(db);
+  const webAuth = new WebAuth(db);
   const app = createMcpExpressApp({ host: "127.0.0.1" });
   const mcpHandler = createMcpHandler(createMcpFactory(repository, authenticator), {
     onerror: (error) => console.error("[MCP]", error.message),
@@ -43,11 +50,44 @@ export function createApp(database?: DatabaseConnection, authenticator = new Htt
     response.json({ status: "ok", service: "project-bridge", mcp_sdk: "2.0.0" });
   });
 
+  app.post("/api/auth/login", (request, response, next) => {
+    try {
+      const input = LoginSchema.parse(request.body);
+      const result = webAuth.login(input.email, input.password);
+      if (!result) return response.status(401).json({ code: "INVALID_CREDENTIALS", message: "E-mail ou senha inválidos." });
+      response.set("Set-Cookie", `pb_session=${result.token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=28800${process.env.NODE_ENV === "production" ? "; Secure" : ""}`);
+      return response.json(result.user);
+    } catch (error) { return next(error); }
+  });
+  app.post("/api/auth/logout", (request, response) => {
+    webAuth.logout(sessionToken(request.get("cookie")));
+    response.set("Set-Cookie", "pb_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0");
+    response.status(204).end();
+  });
+
+  const requireUser = (request: Request, response: Response, next: NextFunction) => {
+    if (options.requireWebAuth === false || (options.requireWebAuth === undefined && process.env.NODE_ENV === "test")) {
+      response.locals.user = { id: "test-user", name: "Interface humana", email: "interface-humana", role: "admin", permissions: ["projects:read", "projects:write", "approvals:decide", "audit:read"] } satisfies WebUser;
+      return next();
+    }
+    const user = webAuth.authenticate(sessionToken(request.get("cookie")));
+    if (!user) return response.status(401).json({ code: "AUTH_REQUIRED", message: "Entre para acessar a Central de Projetos." });
+    response.locals.user = user;
+    return next();
+  };
+  const requirePermission = (permission: Permission) => (_request: Request, response: Response, next: NextFunction) => {
+    const user = response.locals.user as WebUser;
+    if (!webAuth.has(user, permission)) return response.status(403).json({ code: "PERMISSION_DENIED", message: "Seu perfil não permite esta operação." });
+    return next();
+  };
+  app.get("/api/auth/me", requireUser, (_request, response) => response.json(response.locals.user));
+  app.use("/api", requireUser);
+
   app.get("/api/overview", (_request, response) => response.json(repository.overview()));
   app.get("/api/projects", (_request, response) => response.json(repository.listProjects()));
-  app.post("/api/projects", (request, response, next) => {
+  app.post("/api/projects", requirePermission("projects:write"), (request, response, next) => {
     try {
-      const project = repository.createProject(ProjectFieldsSchema.parse(request.body));
+      const project = repository.createProject(ProjectFieldsSchema.parse(request.body), (response.locals.user as WebUser).email);
       mcpHandler.notify.resourceUpdated("project-bridge://projects");
       mcpHandler.notify.resourceUpdated(`project-bridge://projects/${project.id}`);
       response.status(201).json(project);
@@ -60,9 +100,10 @@ export function createApp(database?: DatabaseConnection, authenticator = new Htt
     if (!project) return response.status(404).json({ code: "PROJECT_NOT_FOUND", message: "Projeto não encontrado." });
     return response.json(project);
   });
-  app.patch("/api/projects/:projectId", (request, response, next) => {
+  app.patch("/api/projects/:projectId", requirePermission("projects:write"), (request, response, next) => {
     try {
-      const project = repository.updateProject(request.params.projectId, ProjectUpdateSchema.parse(request.body));
+      const projectId = String(request.params.projectId);
+      const project = repository.updateProject(projectId, ProjectUpdateSchema.parse(request.body), (response.locals.user as WebUser).email);
       mcpHandler.notify.resourceUpdated("project-bridge://projects");
       mcpHandler.notify.resourceUpdated(`project-bridge://projects/${project.id}`);
       response.json(project);
@@ -71,11 +112,12 @@ export function createApp(database?: DatabaseConnection, authenticator = new Htt
     }
   });
   app.get("/api/approvals", (_request, response) => response.json(repository.listApprovals()));
-  app.post("/api/approvals/:approvalId/decision", (request, response, next) => {
+  app.post("/api/approvals/:approvalId/decision", requirePermission("approvals:decide"), (request, response, next) => {
     try {
       const input = DecisionSchema.parse(request.body);
-      const current = repository.getApproval(request.params.approvalId);
-      const approval = repository.decideApproval(request.params.approvalId, input.decision, input.note);
+      const approvalId = String(request.params.approvalId);
+      const current = repository.getApproval(approvalId);
+      const approval = repository.decideApproval(approvalId, input.decision, input.note, (response.locals.user as WebUser).email);
 
       if (current?.status === "pending" && input.decision === "approved") {
         mcpHandler.notify.resourceUpdated(`project-bridge://projects/${approval.project_id}`);
@@ -86,10 +128,10 @@ export function createApp(database?: DatabaseConnection, authenticator = new Htt
       next(error);
     }
   });
-  app.get("/api/audit", (_request, response) => response.json(repository.listAudit()));
-  app.get("/api/mcp/info", (_request, response) => response.json({
+  app.get("/api/audit", requirePermission("audit:read"), (_request, response) => response.json(repository.listAudit()));
+  app.get("/api/mcp/info", requirePermission("audit:read"), (_request, response) => response.json({
     name: "project-bridge",
-    version: "0.6.0",
+    version: "0.7.0",
     transport: "Streamable HTTP",
     http_authentication: "Bearer token",
     authenticated_clients: authenticator.configuredClients,

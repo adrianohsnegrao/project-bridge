@@ -1,4 +1,6 @@
 export type Page = "overview" | "projects" | "approvals" | "activity";
+export type Permission = "projects:read" | "projects:write" | "approvals:decide" | "audit:read";
+export interface WebUser { id: string; name: string; email: string; role: "admin" | "manager" | "reviewer" | "viewer"; permissions: Permission[] }
 
 export interface Overview {
   projects: number;

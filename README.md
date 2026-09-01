@@ -30,6 +30,8 @@ O foco técnico está no protocolo e no desenho seguro da integração. Nenhum m
 - Streamable HTTP em `/mcp` e execução local por stdio;
 - autenticação Bearer obrigatória no transporte HTTP, com tokens fora do repositório;
 - identidade e escopos vinculados à credencial no servidor;
+- login web com senha derivada por `scrypt` e sessão revogável em cookie `HttpOnly`;
+- RBAC aplicado no backend para administrador, gerente, revisor e leitor;
 - MCP Resources, Tools e Prompt;
 - schemas Zod de entrada e saída;
 - escopos mínimos por ferramenta;
@@ -39,7 +41,7 @@ O foco técnico está no protocolo e no desenho seguro da integração. Nenhum m
 - trilha de auditoria com cliente, ação, estado e duração;
 - auditoria separando ações humanas de chamadas feitas por integrações;
 - notificação de mudança para clientes MCP inscritos quando projetos ou aprovações alteram Resources;
-- doze testes automatizados, incluindo autenticação, contratos das mutações, CRUD humano de projetos, transporte HTTP e assinatura real.
+- quinze testes automatizados, incluindo sessões web, RBAC, autenticação MCP, mutações, CRUD humano, transporte HTTP e assinatura real.
 
 ## Corte vertical demonstrado
 
@@ -132,6 +134,16 @@ Acesse:
 - API: [http://127.0.0.1:8010/api/health](http://127.0.0.1:8010/api/health)
 - MCP: `http://127.0.0.1:8010/mcp`
 
+### Contas fictícias locais
+
+| Perfil | E-mail | Senha | Capacidades |
+|---|---|---|---|
+| Administrador | `admin@projectbridge.local` | `admin12345` | Todas |
+| Revisor | `revisor@projectbridge.local` | `revisor12345` | Leitura e decisões de aprovação |
+| Leitor | `leitor@projectbridge.local` | `leitor12345` | Somente leitura |
+
+Essas credenciais existem apenas para tornar o protótipo reproduzível e usam dados fictícios. Uma implantação real deve provisionar usuários externamente, exigir troca inicial e aplicar política de senha.
+
 ## Conectar um cliente MCP
 
 ### stdio
@@ -194,6 +206,10 @@ pnpm build      # builds de produção
 - comparação de tokens por SHA-256 em tempo constante;
 - credenciais fora do repositório e falha segura quando não configuradas;
 - identidade e escopos definidos no servidor, não em cabeçalhos controlados pelo cliente;
+- senhas derivadas com `scrypt`, salt individual e comparação em tempo constante;
+- sessões aleatórias armazenadas somente por hash, com expiração de oito horas e logout revogável;
+- cookie de sessão `HttpOnly`, `SameSite=Strict` e `Secure` em produção;
+- autorização RBAC conferida pelo backend em cada mutação e acesso à auditoria;
 - escopos separados por família de mutação;
 - schemas estritos com Zod;
 - mutação sujeita a aprovação humana;
@@ -215,8 +231,11 @@ pnpm build      # builds de produção
 10. criação e edição de projetos com validação e auditoria da interface humana;
 11. invalidação dos Resources de catálogo e detalhe após alterações de projeto.
 12. rejeição de requests sem token ou com token inválido, inclusive com escopos forjados.
+13. sessão obrigatória, cookie protegido e revogação por logout;
+14. leitor autorizado a consultar, mas impedido de editar e auditar;
+15. revisor autorizado a decidir aprovações sem editar projetos, com identidade auditada.
 
-Os itens acima são cobertos por doze casos automatizados; alguns casos validam mais de um contrato dentro do mesmo fluxo.
+Os itens acima são cobertos por quinze casos automatizados; alguns casos validam mais de um contrato dentro do mesmo fluxo.
 
 ## Limitações do protótipo
 
@@ -228,7 +247,7 @@ Estas limitações delimitam o primeiro corte e orientam as próximas evoluçõe
 - [x] notificações MCP quando Resources forem alterados;
 - [x] validação documentada com cliente MCP externo (Codex CLI);
 - [ ] persistência preparada para cenários multiusuário e distribuídos;
-- [ ] identidade de usuários e separação de suas permissões.
+- [x] identidade de usuários e separação de suas permissões.
 
 Os dados permanecem intencionalmente fictícios para que a demonstração possa ser executada e publicada sem expor informações reais.
 

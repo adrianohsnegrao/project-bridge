@@ -2,6 +2,7 @@ import Database from "better-sqlite3";
 import { mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { passwordHash } from "./web-auth.js";
 
 const defaultDatabasePath = fileURLToPath(
   new URL("../../../.local/project-bridge.db", import.meta.url),
@@ -105,6 +106,24 @@ function migrate(db: DatabaseConnection): void {
       details_json TEXT NOT NULL,
       created_at TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS users (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      email TEXT NOT NULL UNIQUE,
+      password_hash TEXT NOT NULL,
+      role TEXT NOT NULL,
+      active INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS web_sessions (
+      token_hash TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      expires_at TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_web_sessions_expires ON web_sessions(expires_at);
   `);
 
   const blockerColumns = new Set(
@@ -119,6 +138,14 @@ function migrate(db: DatabaseConnection): void {
 }
 
 function seed(db: DatabaseConnection): void {
+  const userCount = db.prepare("SELECT COUNT(*) AS count FROM users").get() as { count: number };
+  if (userCount.count === 0) {
+    const insertUser = db.prepare("INSERT INTO users (id, name, email, password_hash, role, active, created_at) VALUES (?, ?, ?, ?, ?, 1, ?)");
+    const now = new Date().toISOString();
+    insertUser.run("user-admin", "Ana Administradora", "admin@projectbridge.local", passwordHash("admin12345"), "admin", now);
+    insertUser.run("user-reviewer", "Rui Revisor", "revisor@projectbridge.local", passwordHash("revisor12345"), "reviewer", now);
+    insertUser.run("user-viewer", "Lia Leitora", "leitor@projectbridge.local", passwordHash("leitor12345"), "viewer", now);
+  }
   const count = db.prepare("SELECT COUNT(*) AS count FROM projects").get() as { count: number };
   if (count.count > 0) return;
 

@@ -152,6 +152,45 @@ describe("Project Bridge API", () => {
   });
 });
 
+describe("Web authentication and RBAC", () => {
+  it("exige sessão e permite login e logout com cookie HttpOnly", async () => {
+    const runtime = createApp(testDatabase(), new HttpAuthenticator(), { requireWebAuth: true });
+    const agent = request.agent(runtime.app);
+    await agent.get("/api/overview").expect(401);
+    const login = await agent.post("/api/auth/login").send({ email: "admin@projectbridge.local", password: "admin12345" }).expect(200);
+    expect(login.headers["set-cookie"]?.[0]).toContain("HttpOnly");
+    expect(login.headers["set-cookie"]?.[0]).toContain("SameSite=Strict");
+    await agent.get("/api/overview").expect(200);
+    await agent.post("/api/auth/logout").expect(204);
+    await agent.get("/api/overview").expect(401);
+    await runtime.close();
+  });
+
+  it("impede o leitor de editar projetos e consultar auditoria", async () => {
+    const runtime = createApp(testDatabase(), new HttpAuthenticator(), { requireWebAuth: true });
+    const agent = request.agent(runtime.app);
+    await agent.post("/api/auth/login").send({ email: "leitor@projectbridge.local", password: "leitor12345" }).expect(200);
+    await agent.get("/api/projects").expect(200);
+    await agent.patch("/api/projects/atlas").send({ progress: 80 }).expect(403);
+    await agent.get("/api/audit").expect(403);
+    await runtime.close();
+  });
+
+  it("permite ao revisor decidir, mas não editar projetos, e registra sua identidade", async () => {
+    const runtime = createApp(testDatabase(), new HttpAuthenticator(), { requireWebAuth: true });
+    const agent = request.agent(runtime.app);
+    await agent.post("/api/auth/login").send({ email: "revisor@projectbridge.local", password: "revisor12345" }).expect(200);
+    await agent.patch("/api/projects/atlas").send({ progress: 80 }).expect(403);
+    await agent.post("/api/approvals/approval-demo/decision").send({ decision: "rejected", note: "A proposta precisa de evidências adicionais." }).expect(200);
+    const audit = new ProjectRepository(runtime.db).listAudit();
+    expect(audit).toEqual(expect.arrayContaining([expect.objectContaining({
+      action: "decide_approval",
+      client_name: "revisor@projectbridge.local",
+    })]));
+    await runtime.close();
+  });
+});
+
 describe("MCP contracts", () => {
   async function connect(scopes: string[]) {
     const repository = new ProjectRepository(testDatabase());

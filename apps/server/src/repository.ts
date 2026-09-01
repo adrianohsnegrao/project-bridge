@@ -58,7 +58,7 @@ export class ProjectRepository {
     };
   }
 
-  createProject(input: Omit<Project, "id" | "updated_at">): Project {
+  createProject(input: Omit<Project, "id" | "updated_at">, actor = "interface-humana"): Project {
     const now = new Date().toISOString();
     const baseId = input.name
       .normalize("NFD")
@@ -81,7 +81,7 @@ export class ProjectRepository {
       `).run(project);
       this.insertAudit({
         requestId: randomUUID(),
-        clientName: "interface-humana",
+        clientName: actor,
         action: "create_project",
         targetType: "project",
         targetId: id,
@@ -94,7 +94,7 @@ export class ProjectRepository {
     return project;
   }
 
-  updateProject(projectId: string, input: Partial<Omit<Project, "id" | "updated_at">>): Project {
+  updateProject(projectId: string, input: Partial<Omit<Project, "id" | "updated_at">>, actor = "interface-humana"): Project {
     const current = this.db.prepare("SELECT * FROM projects WHERE id = ?").get(projectId) as Project | undefined;
     if (!current) throw new DomainError("PROJECT_NOT_FOUND", "Projeto não encontrado.");
     const updated: Project = { ...current, ...input, updated_at: new Date().toISOString() };
@@ -107,7 +107,7 @@ export class ProjectRepository {
       `).run(updated);
       this.insertAudit({
         requestId: randomUUID(),
-        clientName: "interface-humana",
+        clientName: actor,
         action: "update_project",
         targetType: "project",
         targetId: projectId,
@@ -222,7 +222,7 @@ export class ProjectRepository {
     }, client);
   }
 
-  decideApproval(id: string, decision: "approved" | "rejected", note: string): ApprovalRequest {
+  decideApproval(id: string, decision: "approved" | "rejected", note: string, actor = "revisor-humano"): ApprovalRequest {
     const current = this.getApproval(id);
     if (!current) throw new DomainError("APPROVAL_NOT_FOUND", "Solicitação de aprovação não encontrada.");
     if (current.status !== "pending") return current;
@@ -296,7 +296,7 @@ export class ProjectRepository {
 
       this.insertAudit({
         requestId: id,
-        clientName: "revisor-humano",
+        clientName: actor,
         action: "decide_approval",
         targetType: "approval",
         targetId: id,
